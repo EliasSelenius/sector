@@ -1,0 +1,251 @@
+
+include "../grax/grax.pog";
+
+// ../plang/bin/plang.exe main.pog cflags -lglfw3dll
+
+void apply_camera(Transform2D t) {
+    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "zoom"), t.scale);
+    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "cam_pos"), t.pos.x, t.pos.y);
+    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "cam_rot"), t.rot);
+}
+
+
+void apply_transform(Transform2D t) {
+    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y);
+    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
+    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
+}
+
+void apply_color(Color color) {
+    vec4 v = color_to_vec4(color);
+    glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "added_color"), v.x, v.y, v.z, v.w);
+}
+
+
+void apply_entity_scale(vec2 scale) {
+    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
+}
+
+vec2 get_mouse_world_coord(Transform2D cam_tr) {
+    float32 x = mouse_x as float32 / main_window_width * 2 - 1;
+    float32 y = -(mouse_y as float32 / main_window_height * 2 - 1);
+
+    x /= main_window_aspect;
+
+    return local2world(cam_tr, x, y);
+}
+
+DrawBuffers quad_db;
+
+const   entity_pool_count = 256;
+Entity* entity_pool = calloc(1, entity_pool_count * sizeof Entity);
+Entity* player;
+
+Particle* particles = list_create(sizeof Particle);
+
+struct Entity {
+    with Transform2D tr;
+    vec2 vel;
+    uint32 hp;
+    uint32 tex_handle;
+    uint32 team_id;
+}
+
+struct Particle {
+    vec2 pos;
+    vec2 vel;
+    uint32 team_id;
+}
+
+void spawn_particle(vec2 pos, vec2 vel) {
+    Particle p = {pos, vel};
+    p.team_id = 0;
+    list_add(*particles, *p);
+}
+
+bool entity_is_dead(Entity e) { return e.hp == 0; }
+
+Entity* spawn_entity(vec2 pos, Texture2D tex) {
+    Entity* e = null;
+
+    for 0 .. entity_pool_count {
+        if entity_is_dead(entity_pool[it]) {
+            e = *entity_pool[it];
+            break;
+        }
+    }
+
+    if e == null {
+        print("Error: Exceded max entity count\n");
+    }
+
+    e.tr.pos = pos;
+    e.tr.scale = tex.width / 16;
+    e.hp = 8;
+    e.tex_handle = tex.gl_handle;
+
+    static int32 seed = 0;
+    e.tr.rot = random(seed++) * Pi;
+
+    return e;
+}
+
+void kill_entity(Entity* e) {
+    e.hp = 0;
+}
+
+void update_entity(Entity* e) {
+    e.tr.pos = add(e.tr.pos, e.vel);
+    e.vel = mul(e.vel, 0.99);
+
+    Color color = alpha(Black, 0);
+
+    for 0 .. list_length(particles) {
+        let p = particles[it];
+        if p.team_id == e.team_id continue;
+
+        float32 intersection = circle_intersects(e.tr.pos, e.tr.scale / 2, p.pos, 0.3);
+        if intersection < 0 {
+            color = alpha(White, 0);
+            e.hp--;
+            list_unordered_remove(particles, it as uint32);
+        }
+    }
+
+    apply_transform(e.tr);
+    apply_color(color);
+    glBindTexture(GL_TEXTURE_2D, e.tex_handle);
+    draw_elements(quad_db);
+}
+
+void update_ai(Entity* e) {
+    let dist = length(sub(e.tr.pos, player.tr.pos));
+
+    if dist > 5 {
+        look_at(*e.tr, player.tr.pos);
+
+        vec2 thrust = rotate_vec(vec2_unit_y, e.tr.rot);
+        e.vel = add(e.vel, mul(thrust, 0.003));
+    }
+
+}
+
+float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
+    let len = length(sub(p0, p1));
+    let r = r0 + r1;
+    return len - r;
+}
+
+void main() {
+    grax_init();
+
+
+
+    let spaceship = load_texture2D("sprite_sheet.bmp");
+    let spaceship2 = load_texture2D("spaceship2.bmp");
+    let asteroid = load_texture2D("asteroid.bmp");
+    let projectile = load_texture2D("proj.bmp");
+
+    quad_db = create_draw_buffers();
+    {
+        float32 p = 0.5;
+        vertex2D[] verts = {
+            {-p, -p, 0, 0, White},
+            { p, -p, 1, 0, White},
+            { p,  p, 1, 1, White},
+            {-p,  p, 0, 1, White}
+        };
+
+        uint32[] inds = {
+            0, 1, 2,
+            0, 2, 3
+        };
+        update_buffers(*quad_db, verts.data, verts.length, inds.data, inds.length);
+    }
+
+    player = spawn_entity(vec2_zero, spaceship2);
+    player.team_id = 0;
+    Transform2D camera = {0,0, 0, 10};
+
+    int32 seed = 0;
+    for 0 .. 100 {
+        vec2 pos = {random(seed++), random(seed++)};
+        let e = spawn_entity(mul(pos, 50), asteroid);
+        e.team_id = 2;
+    }
+
+    while grax_loop() {
+
+        use(*default2d_shader);
+        enable_alpha_blending();
+        disable_depth_test();
+
+        vec2 mouse_world_pos = get_mouse_world_coord(camera);
+
+        if mouse_pressed(Right_Mouse) {
+            let e = spawn_entity(mouse_world_pos, spaceship2);
+            e.team_id = 1;
+            e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+        }
+
+        camera.pos = lerp(0.1, camera.pos, player.tr.pos);
+        camera.scale = 10 + length(player.vel) * 10;
+
+        apply_camera(camera);
+
+        { // update player
+            vec2 thrust = rotate_vec(wasd, player.tr.rot);
+            player.vel = add(player.vel, mul(thrust, 0.003));
+
+            look_at(*player.tr, mouse_world_pos);
+
+
+            static float32 gun_recharge = 0;
+            if gun_recharge <= 0 {
+                if mouse(Left_Mouse) {
+                    let u = up(player.tr);
+                    u.x *= -1;
+                    u = mul(u, 0.8);
+                    u = add(u, player.vel);
+                    spawn_particle(add(player.tr.pos, u), u);
+                    gun_recharge = 0.1;
+                }
+            } else {
+                gun_recharge -= deltatime;
+            }
+        }
+
+
+        static uint32 entities_drawn_prev = 0;
+        uint32 entities_drawn = 0;
+        for 0 .. entity_pool_count {
+            let e = *entity_pool[it];
+            if entity_is_dead(@e) continue;
+
+            update_entity(e);
+
+            if e != player and e.tex_handle != asteroid.gl_handle  update_ai(e);
+
+            entities_drawn++;
+        }
+
+        if entities_drawn != entities_drawn_prev  print(entities_drawn, " entities drawn\n");
+        entities_drawn_prev = entities_drawn;
+
+        bind(projectile);
+        for 0 .. list_length(particles) {
+            let p = *particles[it];
+
+
+            Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
+            apply_transform(tr);
+
+            vec2 particle_scale = {0.25, 1};
+            apply_entity_scale(particle_scale);
+            draw_elements(quad_db);
+
+            p.pos = add(p.pos, p.vel);
+        }
+
+    }
+}
