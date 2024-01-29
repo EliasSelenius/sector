@@ -10,8 +10,9 @@ void apply_camera(Transform2D t) {
 }
 
 
-void apply_transform(Transform2D t) {
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y);
+void apply_transform(Transform2D t) { apply_transform(t, 0); }
+void apply_transform(Transform2D t, float32 depth) {
+    glUniform3f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y, depth);
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
@@ -45,6 +46,7 @@ Particle* particles = list_create(sizeof Particle);
 
 struct Entity {
     with Transform2D tr;
+    float32 depth;
     vec2 vel;
     uint32 hp;
     uint32 tex_handle;
@@ -80,7 +82,8 @@ Entity* spawn_entity(vec2 pos, Texture2D tex) {
     }
 
     e.tr.pos = pos;
-    e.tr.scale = tex.width / 16;
+    e.tr.scale = tex.width as float32 / 16.0;
+    e.depth = 0;
     e.hp = 8;
     e.tex_handle = tex.gl_handle;
 
@@ -112,7 +115,7 @@ void update_entity(Entity* e) {
         }
     }
 
-    apply_transform(e.tr);
+    apply_transform(e.tr, e.depth);
     apply_color(color);
     glBindTexture(GL_TEXTURE_2D, e.tex_handle);
     draw_elements(quad_db);
@@ -143,6 +146,7 @@ void main() {
 
     let spaceship = load_texture2D("sprite_sheet.bmp");
     let spaceship2 = load_texture2D("spaceship2.bmp");
+    let spaceship_from_internet = load_texture2D("from_internet.bmp");
     let asteroid = load_texture2D("asteroid.bmp");
     let projectile = load_texture2D("proj.bmp");
 
@@ -172,18 +176,30 @@ void main() {
         vec2 pos = {random(seed++), random(seed++)};
         let e = spawn_entity(mul(pos, 50), asteroid);
         e.team_id = 2;
+
+        let r = random(seed++);
+        if r <= 0  e.depth = 0.01;
+        else e.depth = (1.0 + r) / 2.0;
     }
+
+    glClearColor(0,0,0,0);
 
     while grax_loop() {
 
         use(*default2d_shader);
         enable_alpha_blending();
-        disable_depth_test();
+        enable_depth_test();
 
         vec2 mouse_world_pos = get_mouse_world_coord(camera);
 
         if mouse_pressed(Right_Mouse) {
-            let e = spawn_entity(mouse_world_pos, spaceship2);
+            static uint32 ships_index = 0;
+            Texture2D[] ships = {
+                spaceship,
+                spaceship2,
+                spaceship_from_internet
+            };
+            let e = spawn_entity(mouse_world_pos, ships[ships_index++ % ships.length]);
             e.team_id = 1;
             e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
         }
@@ -194,7 +210,12 @@ void main() {
         apply_camera(camera);
 
         { // update player
-            vec2 thrust = rotate_vec(wasd, player.tr.rot);
+            vec2 input_vec = wasd;
+            const non_forward_factor = 0.5;
+            input_vec.x *= non_forward_factor;
+            if input_vec.y < 0  input_vec.y *= non_forward_factor;
+
+            vec2 thrust = rotate_vec(input_vec, player.tr.rot);
             player.vel = add(player.vel, mul(thrust, 0.003));
 
             look_at(*player.tr, mouse_world_pos);

@@ -818,6 +818,7 @@ struct GizmoPoint {
 };
 struct Entity {
     Transform2D tr;
+    float32 depth;
     vec2 vel;
     uint32 hp;
     uint32 tex_handle;
@@ -860,7 +861,8 @@ struct Camera {
 
 // Forward declarations
 static void apply_camera(Transform2D t);
-static void apply_transform(Transform2D t);
+static void apply_transform1(Transform2D t);
+static void apply_transform2(Transform2D t, float32 depth);
 static void apply_color(Color color);
 static void apply_entity_scale(vec2 scale);
 static vec2 get_mouse_world_coord(Transform2D cam_tr);
@@ -1823,6 +1825,7 @@ static Entity* entity_pool;
 static Particle* particles;
 static UBO** uniform_buffer_objects;
 static int32 seed = 0;
+static uint32 ships_index = 0;
 static float32 gun_recharge = 0;
 static uint32 entities_drawn_prev = 0;
 static char* num_str;
@@ -1834,8 +1837,11 @@ static void apply_camera(Transform2D t) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "cam_pos"), t.pos.x, t.pos.y);
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "cam_rot"), t.rot);
 }
-static void apply_transform(Transform2D t) {
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y);
+static void apply_transform1(Transform2D t) {
+    apply_transform2(t, 0);
+}
+static void apply_transform2(Transform2D t, float32 depth) {
+    glUniform3f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y, depth);
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
@@ -1872,7 +1878,8 @@ static Entity* spawn_entity(vec2 pos, Texture2D tex) {
         printf("%s", "Error: Exceded max entity count\n");
     }
     e->tr.pos = pos;
-    e->tr.scale = (tex.width / 16);
+    e->tr.scale = ((float32)tex.width / 16.000000);
+    e->depth = 0;
     e->hp = 8;
     e->tex_handle = tex.gl_handle;
     // static decl
@@ -1896,7 +1903,7 @@ static void update_entity(Entity* e) {
             list_unordered_remove(particles, (uint32)it);
         }
     }
-    apply_transform(e->tr);
+    apply_transform2(e->tr, e->depth);
     apply_color(color);
     glBindTexture(3553, e->tex_handle);
     draw_elements1(quad_db);
@@ -1918,6 +1925,7 @@ void __main() {
     grax_init();
     Texture2D spaceship = load_texture2D("sprite_sheet.bmp");
     Texture2D spaceship2 = load_texture2D("spaceship2.bmp");
+    Texture2D spaceship_from_internet = load_texture2D("from_internet.bmp");
     Texture2D asteroid = load_texture2D("asteroid.bmp");
     Texture2D projectile = load_texture2D("proj.bmp");
     quad_db = create_draw_buffers2();
@@ -1935,14 +1943,19 @@ void __main() {
         vec2 pos = (vec2) {random(seed++), random(seed++)};
         Entity* e = spawn_entity(mul2(pos, 50), asteroid);
         e->team_id = 2;
+        float32 r = random(seed++);
+        if (r <= 0) e->depth = 0.010000; else e->depth = ((1.000000 + r) / 2.000000);
     }
+    glClearColor(0, 0, 0, 0);
     while (grax_loop()) {
         use(&default2d_shader);
         enable_alpha_blending();
-        disable_depth_test();
+        enable_depth_test();
         vec2 mouse_world_pos = get_mouse_world_coord(camera);
         if (mouse_pressed(1)) {
-            Entity* e = spawn_entity(mouse_world_pos, spaceship2);
+            // static decl
+            Array ships = (Array) { .length = 3, .data = (Texture2D[]){spaceship, spaceship2, spaceship_from_internet}};
+            Entity* e = spawn_entity(mouse_world_pos, ((Texture2D*)ships.data)[(ships_index++ % ships.length)]);
             e->team_id = 1;
             e->vel = mul2(make_vec1((float32)(mouse_x - pmouse_x), (float32)-(mouse_y - pmouse_y)), 0.010000);
         }
@@ -1950,7 +1963,11 @@ void __main() {
         camera.scale = (10 + (length1(player->vel) * 10));
         apply_camera(camera);
         {
-            vec2 thrust = rotate_vec(wasd, player->tr.rot);
+            vec2 input_vec = wasd;
+            /* local constant */
+            input_vec.x *= 0.500000;
+            if (input_vec.y < 0) input_vec.y *= 0.500000;
+            vec2 thrust = rotate_vec(input_vec, player->tr.rot);
             player->vel = add1(player->vel, mul2(thrust, 0.003000));
             look_at2(&player->tr, mouse_world_pos);
             // static decl
@@ -1982,7 +1999,7 @@ void __main() {
         for (int32 it = 0; it < list_length(particles); it++) {
             Particle* p = &particles[it];
             Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
-            apply_transform(tr);
+            apply_transform1(tr);
             vec2 particle_scale = (vec2) {0.250000, 1};
             apply_entity_scale(particle_scale);
             draw_elements1(quad_db);
