@@ -16,6 +16,7 @@ typedef struct Array { void* data; uint32 length; } Array;
 // Structs forward declarations
 typedef struct Entity Entity;
 typedef struct Particle Particle;
+typedef struct BackgroundProp BackgroundProp;
 typedef struct List List;
 typedef struct GLFWvidmode GLFWvidmode;
 typedef struct GLFWgammaramp GLFWgammaramp;
@@ -799,6 +800,11 @@ struct Particle {
     vec2 vel;
     uint32 team_id;
 };
+struct BackgroundProp {
+    Transform2D tr;
+    float32 depth;
+    uint32 tex_handle;
+};
 struct mat2 {
     vec2 row1;
     vec2 row2;
@@ -820,9 +826,11 @@ struct Entity {
     Transform2D tr;
     float32 depth;
     vec2 vel;
+    float32 ang_vel;
     uint32 hp;
     uint32 tex_handle;
     uint32 team_id;
+    float32 gun_recharge;
 };
 struct mat3 {
     vec3 row1;
@@ -866,10 +874,15 @@ static void apply_transform2(Transform2D t, float32 depth);
 static void apply_color(Color color);
 static void apply_entity_scale(vec2 scale);
 static vec2 get_mouse_world_coord(Transform2D cam_tr);
-static void spawn_particle(vec2 pos, vec2 vel);
+static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex);
+static void spawn_particle(vec2 pos, vec2 vel, uint32 team_id);
 static bool entity_is_dead(Entity e);
 static Entity* spawn_entity(vec2 pos, Texture2D tex);
 static void kill_entity(Entity* e);
+static void accelerate(Entity* e, vec2 acc);
+static void thrust(Entity* e, vec2 dir);
+static void turn_to(Entity* e, vec2 target);
+static void fire_gun(Entity* e);
 static void update_entity(Entity* e);
 static void update_ai(Entity* e);
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1);
@@ -901,8 +914,9 @@ static void list_set_length(void* list, uint32 new_len);
 static void list_delete(void* list);
 static void list_clear(void* list);
 static void list_grow(void** list, uint32 new_capacity);
-static void list_add(void** list, void* data);
+static void* list_add(void** list, void* data);
 static void* list_get(void* list, uint32 index);
+static void* list_last_item(void* list);
 static void list_unordered_remove(void* list, uint32 index);
 static void load_opengl(void (*(*getProcAddress)(char*))());
 int32 glfwInit();
@@ -1029,19 +1043,19 @@ static uint64 parse_int3(char* c_str, uint32* length);
 static float64 parse_float1(char* c_str);
 static float64 parse_float2(char* c_str, uint32* length);
 static string to_string1(uint64 num);
-static int32 string_equals(string a, string b);
-static int32 starts_with(char* text, char* start);
+static bool string_equals(string a, string b);
+static bool starts_with(char* text, char* start);
 static string substr_until(char* str, char delim);
 static char* trim_starting_whitespace(char* c_str);
-static int32 is_whitespace(char c);
-static int32 is_upper_case_letter(char c);
-static int32 is_lower_case_letter(char c);
-static int32 is_letter(char c);
-static int32 is_digit(char c);
-static int32 is_hexdigit(char c);
-static int32 is_alphanumeric(char c);
-static int32 is_punctuation(char c);
-static int32 is_whitespace_or_empty(string str);
+static bool is_whitespace(char c);
+static bool is_upper_case_letter(char c);
+static bool is_lower_case_letter(char c);
+static bool is_letter(char c);
+static bool is_digit(char c);
+static bool is_hexdigit(char c);
+static bool is_alphanumeric(char c);
+static bool is_punctuation(char c);
+static bool is_whitespace_or_empty(string str);
 static string alloc_string_copy1(char* str);
 static string alloc_string_copy2(string str);
 static string to_string2(StringBuilder sb);
@@ -1108,8 +1122,11 @@ static int32 max(int32 a, int32 b);
 static int32 clamp1(int32 t, int32 min, int32 max);
 static float32 clamp2(float32 t, float32 min, float32 max);
 static float32 lerp1(float32 t, float32 a, float32 b);
+static float32 map(float32 t, float32 a, float32 b, float32 c, float32 d);
 static int32 round2int(float32 x);
 static float32 fract(float32 x);
+static float32 abs1(float32 x);
+static float64 abs2(float64 x);
 static int32 is_nan1(float32 x);
 static int32 is_nan2(vec2 v);
 static vec2 make_vec1(float32 x, float32 y);
@@ -1256,6 +1273,7 @@ static void bind(Texture2D tex);
 static void set_filter(Texture2D tex, uint32 filter);
 
 // Declarations
+static int32 global_seed = 0;
 static DrawBuffers quad_db;
 static Entity* player;
 static proc_glActiveShaderProgram glActiveShaderProgram = 0;
@@ -1823,10 +1841,10 @@ static uint32 gizmo_points_vao;
 static Shader gizmo_points_shader;
 static Entity* entity_pool;
 static Particle* particles;
+static BackgroundProp* background_props;
 static UBO** uniform_buffer_objects;
-static int32 seed = 0;
 static uint32 ships_index = 0;
-static float32 gun_recharge = 0;
+static uint32 particles_drawn_prev = 0;
 static uint32 entities_drawn_prev = 0;
 static char* num_str;
 static bool prev_state = 0;
@@ -1858,9 +1876,17 @@ static vec2 get_mouse_world_coord(Transform2D cam_tr) {
     x /= main_window_aspect;
     return local2world2(cam_tr, x, y);
 }
-static void spawn_particle(vec2 pos, vec2 vel) {
-    Particle p = (Particle) {pos, vel};
-    p.team_id = 0;
+static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
+    BackgroundProp prop = (BackgroundProp) {0};
+    prop.tr.pos = pos;
+    prop.depth = depth;
+    prop.tr.scale = ((float32)tex.width / 16.000000);
+    prop.tex_handle = tex.gl_handle;
+    prop.tr.rot = (random(global_seed++) * 3.141593);
+    return list_add(&background_props, &prop);
+}
+static void spawn_particle(vec2 pos, vec2 vel, uint32 team_id) {
+    Particle p = (Particle) {pos, vel, team_id};
     list_add(&particles, &p);
 }
 static bool entity_is_dead(Entity e) {
@@ -1882,16 +1908,47 @@ static Entity* spawn_entity(vec2 pos, Texture2D tex) {
     e->depth = 0;
     e->hp = 8;
     e->tex_handle = tex.gl_handle;
-    // static decl
-    e->tr.rot = (random(seed++) * 3.141593);
+    e->tr.rot = (random(global_seed++) * 3.141593);
     return e;
 }
 static void kill_entity(Entity* e) {
     e->hp = 0;
 }
+static void accelerate(Entity* e, vec2 acc) {
+    e->vel = add1(e->vel, mul2(acc, (float32)deltatime));
+}
+static void thrust(Entity* e, vec2 dir) {
+    /* local constant */
+    dir.x *= 0.500000;
+    if (dir.y < 0) dir.y *= 0.500000;
+    dir = mul2(dir, 10);
+    accelerate(e, rotate_vec(dir, e->tr.rot));
+}
+static void turn_to(Entity* e, vec2 target) {
+    vec2 diff = sub1(target, e->tr.pos);
+    diff = rotate_vec(diff, -e->tr.rot);
+    float32 d = dot1(diff, ((vec2){1, 0}));
+    d = clamp2(d, -1, 1);
+    /* local constant */
+    e->ang_vel += ((d * 70.000000) * (float32)deltatime);
+}
+static void fire_gun(Entity* e) {
+    if (e->gun_recharge <= 0) {
+        vec2 disp = up(e->tr);
+        disp.x *= -1;
+        vec2 v = add1(mul2(disp, 50), e->vel);
+        /* local constant */
+        v = add1(v, (vec2){(random(global_seed++) * 3), (random(global_seed++) * 3)});
+        spawn_particle(add1(e->tr.pos, disp), v, e->team_id);
+        e->gun_recharge = 0.100000;
+    }
+}
 static void update_entity(Entity* e) {
-    e->tr.pos = add1(e->tr.pos, e->vel);
+    e->tr.pos = add1(e->tr.pos, mul2(e->vel, (float32)deltatime));
+    e->tr.rot += (e->ang_vel * (float32)deltatime);
     e->vel = mul2(e->vel, 0.990000);
+    e->ang_vel *= 0.990000;
+    e->gun_recharge -= (float32)deltatime;
     Color color = alpha((Color){0, 0, 0, 255}, 0);
     for (int32 it = 0; it < list_length(particles); it++) {
         Particle p = particles[it];
@@ -1900,7 +1957,9 @@ static void update_entity(Entity* e) {
         if (intersection < 0) {
             color = alpha((Color){255, 255, 255, 255}, 0);
             e->hp--;
+            e->vel = add1(e->vel, mul2(p.vel, 0.004000));
             list_unordered_remove(particles, (uint32)it);
+            if (e->hp == 0) break;
         }
     }
     apply_transform2(e->tr, e->depth);
@@ -1909,12 +1968,12 @@ static void update_entity(Entity* e) {
     draw_elements1(quad_db);
 }
 static void update_ai(Entity* e) {
+    look_at2(&e->tr, player->tr.pos);
     float32 dist = length1(sub1(e->tr.pos, player->tr.pos));
-    if (dist > 5) {
-        look_at2(&e->tr, player->tr.pos);
-        vec2 thrust = rotate_vec((vec2){0, 1}, e->tr.rot);
-        e->vel = add1(e->vel, mul2(thrust, 0.003000));
-    }
+    if (dist < 15) fire_gun(e);
+    float32 t = (dist - 5);
+    t = (t / abs1(t));
+    thrust(e, (vec2){1, t});
 }
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     float32 len = length1(sub1(p0, p1));
@@ -1936,15 +1995,21 @@ void __main() {
         update_buffers(&quad_db, verts.data, verts.length, inds.data, inds.length);
     }
     player = spawn_entity((vec2){0, 0}, spaceship2);
+    player->hp = 100;
     player->team_id = 0;
     Transform2D camera = (Transform2D) {0, 0, 0, 10};
-    int32 seed = 0;
+    for (int32 it = 0; it < 400; it++) {
+        vec2 pos = (vec2) {random(global_seed++), random(global_seed++)};
+        float32 r = random(global_seed++);
+        float32 depth = map(r, -1, 1, 0.300000, 1.000000);
+        spawn_background_prop(mul2(pos, 100), depth, asteroid);
+    }
     for (int32 it = 0; it < 100; it++) {
-        vec2 pos = (vec2) {random(seed++), random(seed++)};
+        vec2 pos = (vec2) {random(global_seed++), random(global_seed++)};
         Entity* e = spawn_entity(mul2(pos, 50), asteroid);
         e->team_id = 2;
-        float32 r = random(seed++);
-        if (r <= 0) e->depth = 0.010000; else e->depth = ((1.000000 + r) / 2.000000);
+        e->hp = 20;
+        e->depth = 0.010000;
     }
     glClearColor(0, 0, 0, 0);
     while (grax_loop()) {
@@ -1960,32 +2025,30 @@ void __main() {
             e->vel = mul2(make_vec1((float32)(mouse_x - pmouse_x), (float32)-(mouse_y - pmouse_y)), 0.010000);
         }
         camera.pos = lerp2(0.100000, camera.pos, player->tr.pos);
-        camera.scale = (10 + (length1(player->vel) * 10));
+        camera.scale = (10 + (length1(player->vel) / 10));
         apply_camera(camera);
         {
-            vec2 input_vec = wasd;
-            /* local constant */
-            input_vec.x *= 0.500000;
-            if (input_vec.y < 0) input_vec.y *= 0.500000;
-            vec2 thrust = rotate_vec(input_vec, player->tr.rot);
-            player->vel = add1(player->vel, mul2(thrust, 0.003000));
-            look_at2(&player->tr, mouse_world_pos);
-            // static decl
-            if (gun_recharge <= 0) {
-                if (mouse(0)) {
-                    vec2 u = up(player->tr);
-                    u.x *= -1;
-                    u = mul2(u, 0.800000);
-                    u = add1(u, player->vel);
-                    spawn_particle(add1(player->tr.pos, u), u);
-                    gun_recharge = 0.100000;
-                }
-            } else {
-                gun_recharge -= deltatime;
+            thrust(player, wasd);
+            turn_to(player, mouse_world_pos);
+            if (mouse(0)) fire_gun(player);
+            if (entity_is_dead(*player)) {
+                player->hp = 100;
+                player->tr.pos = (vec2){0, 0};
             }
+            /* local constant */
+            draw_text1((vec2){-1, (1 - (0.100000 / 2))}, 0.100000, to_string1((uint64)player->hp), (Color){255, 255, 255, 255});
         }
         // static decl
+        // static decl
         uint32 entities_drawn = 0;
+        for (int32 it = 0; it < list_length(background_props); it++) {
+            BackgroundProp* prop = &background_props[it];
+            apply_transform2(prop->tr, prop->depth);
+            apply_color(alpha((Color){0, 0, 0, 255}, 0));
+            glBindTexture(3553, prop->tex_handle);
+            draw_elements1(quad_db);
+            entities_drawn++;
+        }
         for (int32 it = 0; it < 256; it++) {
             Entity* e = &entity_pool[it];
             if (entity_is_dead(*e)) continue;
@@ -1996,15 +2059,18 @@ void __main() {
         if (entities_drawn != entities_drawn_prev) printf("%u%s", entities_drawn, " entities drawn\n");
         entities_drawn_prev = entities_drawn;
         bind(projectile);
-        for (int32 it = 0; it < list_length(particles); it++) {
+        uint32 particles_count = list_length(particles);
+        for (int32 it = 0; it < particles_count; it++) {
             Particle* p = &particles[it];
             Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
             apply_transform1(tr);
             vec2 particle_scale = (vec2) {0.250000, 1};
             apply_entity_scale(particle_scale);
             draw_elements1(quad_db);
-            p->pos = add1(p->pos, p->vel);
+            p->pos = add1(p->pos, mul2(p->vel, (float32)deltatime));
         }
+        if (particles_count != particles_drawn_prev) printf("%u%s", particles_count, " particles drawn\n");
+        particles_drawn_prev = particles_count;
     }
 }
 static char* fileread1(char* filename) {
@@ -2068,16 +2134,21 @@ static void list_grow(void** list, uint32 new_capacity) {
     head = realloc(head, (sizeof(List) + (head->capacity * head->stride)));
     *list = &head[1];
 }
-static void list_add(void** list, void* data) {
+static void* list_add(void** list, void* data) {
     uint32 len = list_length(*list);
     uint32 cap = list_capacity(*list);
     uint32 stride = list_stride(*list);
     if (cap == len) list_grow(list, (cap * 2));
-    memcpy((((byte*)*list) + (len * stride)), data, stride);
+    void* dst = (((byte*)*list) + (len * stride));
+    memcpy(dst, data, stride);
     list_set_length(*list, (len + 1));
+    return dst;
 }
 static void* list_get(void* list, uint32 index) {
     return (((byte*)list) + (list_stride(list) * index));
+}
+static void* list_last_item(void* list) {
+    return list_get(list, (list_length(list) - 1));
 }
 static void list_unordered_remove(void* list, uint32 index) {
     uint32 len = list_length(list);
@@ -2683,12 +2754,12 @@ static string to_string1(uint64 num) {
     }
     return (string){&num_str[i], (20 - i)};
 }
-static int32 string_equals(string a, string b) {
+static bool string_equals(string a, string b) {
     if (a.length != b.length) return 0;
     for (int32 i = 0; i < a.length; i++) if (a.chars[i] != b.chars[i]) return 0;
     return 1;
 }
-static int32 starts_with(char* text, char* start) {
+static bool starts_with(char* text, char* start) {
     int32 i = 0;
     while (start[i]) {
         if (start[i] != text[i]) return 0;
@@ -2708,31 +2779,31 @@ static char* trim_starting_whitespace(char* c_str) {
     while (is_whitespace(*c_str)) c_str++;
     return c_str;
 }
-static int32 is_whitespace(char c) {
+static bool is_whitespace(char c) {
     return (((c == ' ') || (c == '\n')) || (c == '\t'));
 }
-static int32 is_upper_case_letter(char c) {
+static bool is_upper_case_letter(char c) {
     return ((c >= 'A') && (c <= 'Z'));
 }
-static int32 is_lower_case_letter(char c) {
+static bool is_lower_case_letter(char c) {
     return ((c >= 'a') && (c <= 'z'));
 }
-static int32 is_letter(char c) {
+static bool is_letter(char c) {
     return (is_lower_case_letter(c) || is_upper_case_letter(c));
 }
-static int32 is_digit(char c) {
+static bool is_digit(char c) {
     return ((c >= '0') && (c <= '9'));
 }
-static int32 is_hexdigit(char c) {
+static bool is_hexdigit(char c) {
     return ((is_digit(c) || ((c >= 'a') && (c <= 'f'))) || ((c >= 'A') && (c <= 'F')));
 }
-static int32 is_alphanumeric(char c) {
+static bool is_alphanumeric(char c) {
     return (is_letter(c) || is_digit(c));
 }
-static int32 is_punctuation(char c) {
+static bool is_punctuation(char c) {
     return (((((c >= '!') && (c <= '/')) || ((c >= ':') && (c <= '@'))) || ((c >= '[') && (c <= '`'))) || ((c >= '{') && (c <= '~')));
 }
-static int32 is_whitespace_or_empty(string str) {
+static bool is_whitespace_or_empty(string str) {
     for (int32 it = 0; it < str.length; it++) {
         if (!is_whitespace(str.chars[it])) return 0;
     }
@@ -3248,11 +3319,20 @@ static float32 clamp2(float32 t, float32 min, float32 max) {
 static float32 lerp1(float32 t, float32 a, float32 b) {
     return (a + ((b - a) * t));
 }
+static float32 map(float32 t, float32 a, float32 b, float32 c, float32 d) {
+    return lerp1(((t - a) / (b - a)), c, d);
+}
 static int32 round2int(float32 x) {
     return (int32)(x + 0.500000);
 }
 static float32 fract(float32 x) {
     return (x - floorf(x));
+}
+static float32 abs1(float32 x) {
+    return (x < 0) ? -x : x;
+}
+static float64 abs2(float64 x) {
+    return (x < 0) ? -x : x;
 }
 static int32 is_nan1(float32 x) {
     return (x != x);
@@ -4238,6 +4318,7 @@ static void set_filter(Texture2D tex, uint32 filter) {
 static void __static_init() {
     entity_pool = calloc(1, (256 * sizeof(Entity)));
     particles = list_create(sizeof(Particle));
+    background_props = list_create(sizeof(BackgroundProp));
     uniform_buffer_objects = (UBO**)list_create(sizeof(UBO*));
     num_str = malloc(20);
 }
