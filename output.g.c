@@ -15,8 +15,9 @@ typedef struct Array { void* data; uint32 length; } Array;
 
 // Structs forward declarations
 typedef struct Entity Entity;
-typedef struct Particle Particle;
+typedef struct Bullet Bullet;
 typedef struct BackgroundProp BackgroundProp;
+typedef struct Particle Particle;
 typedef struct List List;
 typedef struct GLFWvidmode GLFWvidmode;
 typedef struct GLFWgammaramp GLFWgammaramp;
@@ -795,7 +796,7 @@ struct OBJ_Object {
     uint32 indices_length;
     char group_type;
 };
-struct Particle {
+struct Bullet {
     vec2 pos;
     vec2 vel;
     uint32 team_id;
@@ -831,6 +832,13 @@ struct Entity {
     uint32 tex_handle;
     uint32 team_id;
     float32 gun_recharge;
+};
+struct Particle {
+    vec2 pos;
+    float32 rot;
+    vec2 vel;
+    Texture2D tex;
+    float32 life_time;
 };
 struct mat3 {
     vec3 row1;
@@ -871,11 +879,18 @@ struct Camera {
 static void apply_camera(Transform2D t);
 static void apply_transform1(Transform2D t);
 static void apply_transform2(Transform2D t, float32 depth);
-static void apply_color(Color color);
+static void apply_color_tint(Color color);
+static void apply_color(vec4 v);
 static void apply_entity_scale(vec2 scale);
 static vec2 get_mouse_world_coord(Transform2D cam_tr);
+static vec2 random_unit_vec21();
+static vec2 random_unit_vec22(float32 max_len);
+static float32 random01();
+static float32 random_range(int32 seed, float32 min, float32 max);
 static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex);
-static void spawn_particle(vec2 pos, vec2 vel, uint32 team_id);
+static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id);
+static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex);
+static void draw_particles();
 static bool entity_is_dead(Entity e);
 static Entity* spawn_entity(vec2 pos, Texture2D tex);
 static void kill_entity(Entity* e);
@@ -1132,6 +1147,10 @@ static int32 is_nan2(vec2 v);
 static vec2 make_vec1(float32 x, float32 y);
 static vec3 make_vec2(float32 x, float32 y, float32 z);
 static vec4 make_vec3(float32 x, float32 y, float32 z, float32 w);
+static vec3 make_vec4(vec2 xy, float32 z);
+static vec3 make_vec5(float32 x, vec2 yz);
+static vec4 make_vec6(vec3 xyz, float32 w);
+static vec4 make_vec7(float32 x, vec3 yzw);
 static vec2 sub1(vec2 a, vec2 b);
 static vec2 add1(vec2 a, vec2 b);
 static vec2 mul1(vec2 a, vec2 b);
@@ -1275,6 +1294,12 @@ static void set_filter(Texture2D tex, uint32 filter);
 // Declarations
 static int32 global_seed = 0;
 static DrawBuffers quad_db;
+static Texture2D spaceship;
+static Texture2D spaceship2;
+static Texture2D spaceship_from_internet;
+static Texture2D asteroid;
+static Texture2D projectile;
+static Texture2D particle;
 static Entity* player;
 static proc_glActiveShaderProgram glActiveShaderProgram = 0;
 static proc_glActiveTexture glActiveTexture = 0;
@@ -1840,6 +1865,7 @@ static uint32 gizmo_points_vbo;
 static uint32 gizmo_points_vao;
 static Shader gizmo_points_shader;
 static Entity* entity_pool;
+static Bullet* bullets;
 static Particle* particles;
 static BackgroundProp* background_props;
 static UBO** uniform_buffer_objects;
@@ -1863,9 +1889,11 @@ static void apply_transform2(Transform2D t, float32 depth) {
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
-static void apply_color(Color color) {
-    vec4 v = color_to_vec4(color);
-    glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "added_color"), v.x, v.y, v.z, v.w);
+static void apply_color_tint(Color color) {
+    apply_color(color_to_vec4(color));
+}
+static void apply_color(vec4 v) {
+    glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
 }
 static void apply_entity_scale(vec2 scale) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
@@ -1876,6 +1904,19 @@ static vec2 get_mouse_world_coord(Transform2D cam_tr) {
     x /= main_window_aspect;
     return local2world2(cam_tr, x, y);
 }
+static vec2 random_unit_vec21() {
+    float32 a = (random(global_seed++) * 3.141593);
+    return (vec2) {cosf(a), sinf(a)};
+}
+static vec2 random_unit_vec22(float32 max_len) {
+    return mul2(random_unit_vec21(), ((max_len * (random(global_seed++) + 1.000000)) / 2.000000));
+}
+static float32 random01() {
+    return ((random(global_seed++) + 1.000000) / 2.000000);
+}
+static float32 random_range(int32 seed, float32 min, float32 max) {
+    return lerp1(((random(seed) + 1.000000) / 2.000000), min, max);
+}
 static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
     BackgroundProp prop = (BackgroundProp) {0};
     prop.tr.pos = pos;
@@ -1885,9 +1926,38 @@ static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D 
     prop.tr.rot = (random(global_seed++) * 3.141593);
     return list_add(&background_props, &prop);
 }
-static void spawn_particle(vec2 pos, vec2 vel, uint32 team_id) {
-    Particle p = (Particle) {pos, vel, team_id};
+static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
+    Bullet p = (Bullet) {pos, vel, team_id};
+    list_add(&bullets, &p);
+}
+static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
+    Particle p = (Particle) {0};
+    p.pos = pos;
+    p.vel = vel;
+    p.rot = (random(global_seed++) * 3.141593);
+    p.tex = tex;
+    p.life_time = (random01() * 2.500000);
     list_add(&particles, &p);
+}
+static void draw_particles() {
+    float32 dt = (float32)deltatime;
+    uint32 count = list_length(particles);
+    for (int32 it = 0; it < count; it++) {
+        Particle* p = &particles[it];
+        p->pos = add1(p->pos, mul2(p->vel, dt));
+        p->vel = mul2(p->vel, random_range(it, 0.960000, 1));
+        p->life_time -= dt;
+        bind(p->tex);
+        Transform2D tr = (Transform2D) {p->pos, p->rot, 1};
+        apply_transform2(tr, 0.010000);
+        vec2 scale = (vec2) {p->tex.width, p->tex.height};
+        apply_entity_scale(mul2(scale, (1.000000 / 16.000000)));
+        /* local constant */
+        /* local constant */
+        apply_color(make_vec6(lerp3(p->life_time, (vec3){(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3){1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
+        draw_elements1(quad_db);
+        if (p->life_time < 0) list_unordered_remove(particles, (uint32)it);
+    }
 }
 static bool entity_is_dead(Entity e) {
     return (e.hp == 0);
@@ -1927,10 +1997,8 @@ static void thrust(Entity* e, vec2 dir) {
 static void turn_to(Entity* e, vec2 target) {
     vec2 diff = sub1(target, e->tr.pos);
     diff = rotate_vec(diff, -e->tr.rot);
-    float32 d = dot1(diff, ((vec2){1, 0}));
-    d = clamp2(d, -1, 1);
-    /* local constant */
-    e->ang_vel += ((d * 70.000000) * (float32)deltatime);
+    float32 angle = vec2_to_angle(diff);
+    e->ang_vel = (angle * 10);
 }
 static void fire_gun(Entity* e) {
     if (e->gun_recharge <= 0) {
@@ -1938,8 +2006,8 @@ static void fire_gun(Entity* e) {
         disp.x *= -1;
         vec2 v = add1(mul2(disp, 50), e->vel);
         /* local constant */
-        v = add1(v, (vec2){(random(global_seed++) * 3), (random(global_seed++) * 3)});
-        spawn_particle(add1(e->tr.pos, disp), v, e->team_id);
+        v = add1(v, random_unit_vec22(3));
+        spawn_bullet(add1(e->tr.pos, disp), v, e->team_id);
         e->gun_recharge = 0.100000;
     }
 }
@@ -1947,19 +2015,25 @@ static void update_entity(Entity* e) {
     e->tr.pos = add1(e->tr.pos, mul2(e->vel, (float32)deltatime));
     e->tr.rot += (e->ang_vel * (float32)deltatime);
     e->vel = mul2(e->vel, 0.990000);
-    e->ang_vel *= 0.990000;
     e->gun_recharge -= (float32)deltatime;
-    Color color = alpha((Color){0, 0, 0, 255}, 0);
-    for (int32 it = 0; it < list_length(particles); it++) {
-        Particle p = particles[it];
+    vec4 color = (vec4){1, 1, 1, 1};
+    for (int32 it = 0; it < list_length(bullets); it++) {
+        Bullet p = bullets[it];
         if (p.team_id == e->team_id) continue;
         float32 intersection = circle_intersects(e->tr.pos, (e->tr.scale / 2), p.pos, 0.300000);
         if (intersection < 0) {
-            color = alpha((Color){255, 255, 255, 255}, 0);
+            color = (vec4) {100, 100, 100, 0};
             e->hp--;
             e->vel = add1(e->vel, mul2(p.vel, 0.004000));
-            list_unordered_remove(particles, (uint32)it);
-            if (e->hp == 0) break;
+            list_unordered_remove(bullets, (uint32)it);
+            if (e->hp == 0) {
+                for (int32 it = 0; it < ((40 * e->tr.scale) * e->tr.scale); it++) {
+                    /* local constant */
+                    vec2 r = random_unit_vec22(7);
+                    spawn_particle(e->tr.pos, add1(e->vel, r), particle);
+                }
+                break;
+            }
         }
     }
     apply_transform2(e->tr, e->depth);
@@ -1968,12 +2042,12 @@ static void update_entity(Entity* e) {
     draw_elements1(quad_db);
 }
 static void update_ai(Entity* e) {
-    look_at2(&e->tr, player->tr.pos);
+    turn_to(e, player->tr.pos);
     float32 dist = length1(sub1(e->tr.pos, player->tr.pos));
     if (dist < 15) fire_gun(e);
     float32 t = (dist - 5);
     t = (t / abs1(t));
-    thrust(e, (vec2){1, t});
+    thrust(e, (vec2){0, t});
 }
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     float32 len = length1(sub1(p0, p1));
@@ -1982,11 +2056,12 @@ static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
 }
 void __main() {
     grax_init();
-    Texture2D spaceship = load_texture2D("sprite_sheet.bmp");
-    Texture2D spaceship2 = load_texture2D("spaceship2.bmp");
-    Texture2D spaceship_from_internet = load_texture2D("from_internet.bmp");
-    Texture2D asteroid = load_texture2D("asteroid.bmp");
-    Texture2D projectile = load_texture2D("proj.bmp");
+    spaceship = load_texture2D("sprite_sheet.bmp");
+    spaceship2 = load_texture2D("spaceship2.bmp");
+    spaceship_from_internet = load_texture2D("from_internet.bmp");
+    asteroid = load_texture2D("asteroid.bmp");
+    projectile = load_texture2D("proj.bmp");
+    particle = load_texture2D("particle.bmp");
     quad_db = create_draw_buffers2();
     {
         float32 p = 0.500000;
@@ -2044,7 +2119,7 @@ void __main() {
         for (int32 it = 0; it < list_length(background_props); it++) {
             BackgroundProp* prop = &background_props[it];
             apply_transform2(prop->tr, prop->depth);
-            apply_color(alpha((Color){0, 0, 0, 255}, 0));
+            apply_color((vec4){1, 1, 1, 1});
             glBindTexture(3553, prop->tex_handle);
             draw_elements1(quad_db);
             entities_drawn++;
@@ -2059,9 +2134,9 @@ void __main() {
         if (entities_drawn != entities_drawn_prev) printf("%u%s", entities_drawn, " entities drawn\n");
         entities_drawn_prev = entities_drawn;
         bind(projectile);
-        uint32 particles_count = list_length(particles);
-        for (int32 it = 0; it < particles_count; it++) {
-            Particle* p = &particles[it];
+        uint32 bullets_count = list_length(bullets);
+        for (int32 it = 0; it < bullets_count; it++) {
+            Bullet* p = &bullets[it];
             Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
             apply_transform1(tr);
             vec2 particle_scale = (vec2) {0.250000, 1};
@@ -2069,8 +2144,10 @@ void __main() {
             draw_elements1(quad_db);
             p->pos = add1(p->pos, mul2(p->vel, (float32)deltatime));
         }
-        if (particles_count != particles_drawn_prev) printf("%u%s", particles_count, " particles drawn\n");
-        particles_drawn_prev = particles_count;
+        if (bullets_count != particles_drawn_prev) printf("%u%s", bullets_count, " particles drawn\n");
+        particles_drawn_prev = bullets_count;
+        disable_depth_test();
+        draw_particles();
     }
 }
 static char* fileread1(char* filename) {
@@ -2963,6 +3040,7 @@ static void grax_init() {
     free(image.pixels);
 }
 static void on_resize(GLFWwindow* window, int32 w, int32 h) {
+    if ((w == 0) || (h == 0)) return;
     main_window_width = (float32)w;
     main_window_height = (float32)h;
     main_window_aspect = (main_window_height / main_window_width);
@@ -3348,6 +3426,18 @@ static vec3 make_vec2(float32 x, float32 y, float32 z) {
 }
 static vec4 make_vec3(float32 x, float32 y, float32 z, float32 w) {
     return (vec4) {x, y, z, w};
+}
+static vec3 make_vec4(vec2 xy, float32 z) {
+    return (vec3) {xy.x, xy.y, z};
+}
+static vec3 make_vec5(float32 x, vec2 yz) {
+    return (vec3) {x, yz.x, yz.y};
+}
+static vec4 make_vec6(vec3 xyz, float32 w) {
+    return (vec4) {xyz.x, xyz.y, xyz.z, w};
+}
+static vec4 make_vec7(float32 x, vec3 yzw) {
+    return (vec4) {x, yzw.x, yzw.y, yzw.z};
 }
 static vec2 sub1(vec2 a, vec2 b) {
     return make_vec1((a.x - b.x), (a.y - b.y));
@@ -4317,6 +4407,7 @@ static void set_filter(Texture2D tex, uint32 filter) {
 }
 static void __static_init() {
     entity_pool = calloc(1, (256 * sizeof(Entity)));
+    bullets = list_create(sizeof(Bullet));
     particles = list_create(sizeof(Particle));
     background_props = list_create(sizeof(BackgroundProp));
     uniform_buffer_objects = (UBO**)list_create(sizeof(UBO*));

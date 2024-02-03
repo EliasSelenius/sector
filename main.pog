@@ -5,10 +5,10 @@ include "../grax/grax.pog";
 
 /*
 
-    - explosion effect
+    // - explosion effect
     - thrusters effect
     // - enemy fight back
-    - angular valocity
+    // - angular valocity
 
 */
 
@@ -26,9 +26,12 @@ void apply_transform(Transform2D t, float32 depth) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
 
-void apply_color(Color color) {
-    vec4 v = color_to_vec4(color);
-    glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "added_color"), v.x, v.y, v.z, v.w);
+void apply_color_tint(Color color) {
+    apply_color(color_to_vec4(color));
+}
+
+void apply_color(vec4 v) {
+    glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
 }
 
 
@@ -47,12 +50,37 @@ vec2 get_mouse_world_coord(Transform2D cam_tr) {
 
 int32 global_seed = 0;
 
+vec2 random_unit_vec2() {
+    // return normalize(make_vec(random(global_seed++), random(global_seed++)));
+    float32 a = random(global_seed++) * Pi;
+    return { cosf(a), sinf(a) };
+}
+vec2 random_unit_vec2(float32 max_len) {
+    return mul(random_unit_vec2(), max_len * (random(global_seed++) + 1.0) / 2.0);
+}
+
+float32 random01() { return (random(global_seed++) + 1.0) / 2.0; }
+
+float32 random_range(int32 seed, float32 min, float32 max) {
+    return lerp((random(seed) + 1.0) / 2.0, min, max);
+}
+
 DrawBuffers quad_db;
+
+Texture2D spaceship;
+Texture2D spaceship2;
+Texture2D spaceship_from_internet;
+Texture2D asteroid;
+Texture2D projectile;
+Texture2D particle;
+
+const linear_drag = 0.99;
 
 const   entity_pool_count = 256;
 Entity* entity_pool = calloc(1, entity_pool_count * sizeof Entity);
 Entity* player;
 
+Bullet* bullets = list_create(sizeof Bullet);
 Particle* particles = list_create(sizeof Particle);
 
 BackgroundProp* background_props = list_create(sizeof BackgroundProp);
@@ -68,7 +96,7 @@ struct Entity {
     float32 gun_recharge;
 }
 
-struct Particle {
+struct Bullet {
     vec2 pos;
     vec2 vel;
     uint32 team_id;
@@ -92,9 +120,50 @@ BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
     return list_add(*background_props, *prop);
 }
 
-void spawn_particle(vec2 pos, vec2 vel, uint32 team_id) {
-    Particle p = {pos, vel, team_id};
+void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
+    Bullet p = {pos, vel, team_id};
+    list_add(*bullets, *p);
+}
+
+struct Particle {
+    vec2 pos;
+    float32 rot;
+    vec2 vel;
+    Texture2D tex;
+    float32 life_time;
+}
+
+void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
+    Particle p = {};
+    p.pos = pos;
+    p.vel = vel;
+    p.rot = random(global_seed++) * Pi;
+    p.tex = tex;
+    p.life_time = random01() * 2.5;
     list_add(*particles, *p);
+}
+
+void draw_particles() {
+    let dt = deltatime as float32;
+    let count = list_length(particles);
+    for 0 .. count {
+        let p = *particles[it];
+        p.pos = add(p.pos, mul(p.vel, dt));
+        p.vel = mul(p.vel, random_range(it, 0.96, 1));
+        p.life_time -= dt;
+
+        bind(p.tex);
+        Transform2D tr = {p.pos, p.rot, 1};
+        apply_transform(tr, 0.01);
+        vec2 scale = { p.tex.width, p.tex.height };
+        apply_entity_scale(mul(scale, 1.0 / 16.0));
+        const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
+        const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
+        apply_color(make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time));
+        draw_elements(quad_db);
+
+        if p.life_time < 0  list_unordered_remove(particles, it as uint32);
+    }
 }
 
 bool entity_is_dead(Entity e) { return e.hp == 0; }
@@ -147,14 +216,9 @@ void thrust(Entity* e, vec2 dir) {
 void turn_to(Entity* e, vec2 target) {
     let diff = sub(target, e.tr.pos);
     diff = rotate_vec(diff, -e.tr.rot);
+    float32 angle = vec2_to_angle(diff);
 
-        //  |diff| * cos a
-    let d = dot(diff, (vec2_unit_x));
-    // d = d/abs(d);
-    d = clamp(d, -1, 1);
-
-    const angular_thrust = 70.0;
-    e.ang_vel += d * angular_thrust * deltatime as float32;
+    e.ang_vel = angle * 10;
 }
 
 void fire_gun(Entity* e) {
@@ -163,8 +227,8 @@ void fire_gun(Entity* e) {
         disp.x *= -1;
         let v = add(mul(disp, 50), e.vel);
         const spread = 3;
-        v = add(v, {random(global_seed++) * spread, random(global_seed++) * spread} as vec2);
-        spawn_particle(add(e.tr.pos, disp), v, e.team_id);
+        v = add(v, random_unit_vec2(spread));
+        spawn_bullet(add(e.tr.pos, disp), v, e.team_id);
         e.gun_recharge = 0.1;
     }
 }
@@ -172,25 +236,32 @@ void fire_gun(Entity* e) {
 void update_entity(Entity* e) {
     e.tr.pos = add(e.tr.pos, mul(e.vel, deltatime as float32));
     e.tr.rot += e.ang_vel * deltatime as float32;
-    e.vel = mul(e.vel, 0.99);
-    e.ang_vel *= 0.99;
+    e.vel = mul(e.vel, linear_drag);
+    // e.ang_vel *= 0.99;
 
     e.gun_recharge -= deltatime as float32;
 
-    Color color = alpha(Black, 0);
+    vec4 color = vec4_one;
 
-    for 0 .. list_length(particles) {
-        let p = particles[it];
+    for 0 .. list_length(bullets) {
+        let p = bullets[it];
         if p.team_id == e.team_id continue;
 
         float32 intersection = circle_intersects(e.tr.pos, e.tr.scale / 2, p.pos, 0.3);
         if intersection < 0 {
-            color = alpha(White, 0);
+            color = {100, 100, 100, 0};
             e.hp--;
             e.vel = add(e.vel, mul(p.vel, 0.004));
-            list_unordered_remove(particles, it as uint32);
+            list_unordered_remove(bullets, it as uint32);
 
-            if e.hp == 0 break;
+            if e.hp == 0 {
+                for 0 .. 40 * e.tr.scale * e.tr.scale {
+                    const spread = 7;
+                    vec2 r = random_unit_vec2(spread);
+                    spawn_particle(e.tr.pos, add(e.vel, r), particle);
+                }
+                break;
+            }
         }
     }
 
@@ -202,14 +273,15 @@ void update_entity(Entity* e) {
 
 void update_ai(Entity* e) {
 
-    look_at(*e.tr, player.tr.pos);
+    // look_at(*e.tr, player.tr.pos);
+    turn_to(e, player.tr.pos);
     let dist = length(sub(e.tr.pos, player.tr.pos));
 
     if dist < 15  fire_gun(e);
 
     let t = dist - 5;
     t = t / abs(t);
-    thrust(e, { 1, t } as vec2);
+    thrust(e, { 0, t } as vec2);
 }
 
 float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
@@ -221,11 +293,12 @@ float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
 void main() {
     grax_init();
 
-    let spaceship = load_texture2D("sprite_sheet.bmp");
-    let spaceship2 = load_texture2D("spaceship2.bmp");
-    let spaceship_from_internet = load_texture2D("from_internet.bmp");
-    let asteroid = load_texture2D("asteroid.bmp");
-    let projectile = load_texture2D("proj.bmp");
+    spaceship = load_texture2D("sprite_sheet.bmp");
+    spaceship2 = load_texture2D("spaceship2.bmp");
+    spaceship_from_internet = load_texture2D("from_internet.bmp");
+    asteroid = load_texture2D("asteroid.bmp");
+    projectile = load_texture2D("proj.bmp");
+    particle = load_texture2D("particle.bmp");
 
     quad_db = create_draw_buffers();
     {
@@ -317,7 +390,7 @@ void main() {
             let prop = *background_props[it];
 
             apply_transform(prop.tr, prop.depth);
-            apply_color(alpha(Black, 0));
+            apply_color(vec4_one);
             glBindTexture(GL_TEXTURE_2D, prop.tex_handle);
             draw_elements(quad_db);
 
@@ -340,23 +413,27 @@ void main() {
         entities_drawn_prev = entities_drawn;
 
         bind(projectile);
-        uint32 particles_count = list_length(particles);
-        for 0 .. particles_count {
-            let p = *particles[it];
+        uint32 bullets_count = list_length(bullets);
+        for 0 .. bullets_count {
+            let p = *bullets[it];
 
 
             Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
             apply_transform(tr);
 
-            vec2 particle_scale = {0.25, 1};
+            vec2 particle_scale = {0.25, 1}; // TODO: hard coded dimentions here
             apply_entity_scale(particle_scale);
             draw_elements(quad_db);
 
             p.pos = add(p.pos, mul(p.vel, deltatime as float32));
         }
 
-        if particles_count != particles_drawn_prev print(particles_count, " particles drawn\n");
-        particles_drawn_prev = particles_count;
+        if bullets_count != particles_drawn_prev   print(bullets_count, " particles drawn\n");
+        particles_drawn_prev = bullets_count;
+
+
+        disable_depth_test();
+        draw_particles();
 
     }
 }
