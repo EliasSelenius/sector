@@ -14,10 +14,6 @@ int printf(const char* format, ...);
 typedef struct Array { void* data; uint32 length; } Array;
 
 // Structs forward declarations
-typedef struct Entity Entity;
-typedef struct Bullet Bullet;
-typedef struct BackgroundProp BackgroundProp;
-typedef struct Particle Particle;
 typedef struct List List;
 typedef struct GLFWvidmode GLFWvidmode;
 typedef struct GLFWgammaramp GLFWgammaramp;
@@ -29,6 +25,7 @@ typedef struct StringReader StringReader;
 typedef struct SR_Token SR_Token;
 typedef struct UBO UBO;
 typedef struct Shader Shader;
+typedef struct Trianglebatch Trianglebatch;
 typedef struct vec2 vec2;
 typedef struct ivec2 ivec2;
 typedef struct vec3 vec3;
@@ -55,6 +52,10 @@ typedef struct Color Color;
 typedef struct ColorRgb ColorRgb;
 typedef struct Framebuffer Framebuffer;
 typedef struct Texture2D Texture2D;
+typedef struct Entity Entity;
+typedef struct Bullet Bullet;
+typedef struct BackgroundProp BackgroundProp;
+typedef struct Particle Particle;
 
 // Enums
 
@@ -694,6 +695,12 @@ struct StringReader {
 struct Shader {
     uint32 gl_handle;
 };
+struct Trianglebatch {
+    vertex2D* vertices;
+    uint32* indices;
+    Shader* shader;
+    Texture2D* texture;
+};
 struct vec2 {
     float32 x;
     float32 y;
@@ -796,16 +803,6 @@ struct OBJ_Object {
     uint32 indices_length;
     char group_type;
 };
-struct Bullet {
-    vec2 pos;
-    vec2 vel;
-    uint32 team_id;
-};
-struct BackgroundProp {
-    Transform2D tr;
-    float32 depth;
-    uint32 tex_handle;
-};
 struct mat2 {
     vec2 row1;
     vec2 row2;
@@ -823,22 +820,15 @@ struct GizmoPoint {
     Color color;
     float32 size;
 };
-struct Entity {
+struct Bullet {
+    vec2 pos;
+    vec2 vel;
+    uint32 team_id;
+};
+struct BackgroundProp {
     Transform2D tr;
     float32 depth;
-    vec2 vel;
-    float32 ang_vel;
-    uint32 hp;
     uint32 tex_handle;
-    uint32 team_id;
-    float32 gun_recharge;
-};
-struct Particle {
-    vec2 pos;
-    float32 rot;
-    vec2 vel;
-    Texture2D tex;
-    float32 life_time;
 };
 struct mat3 {
     vec3 row1;
@@ -859,6 +849,23 @@ struct vertex2D {
     vec2 pos;
     vec2 uv;
     Color color;
+};
+struct Entity {
+    Transform2D tr;
+    float32 depth;
+    vec2 vel;
+    float32 ang_vel;
+    uint32 hp;
+    uint32 tex_handle;
+    uint32 team_id;
+    float32 gun_recharge;
+};
+struct Particle {
+    vec2 pos;
+    float32 rot;
+    vec2 vel;
+    Texture2D tex;
+    float32 life_time;
 };
 struct mat4 {
     vec4 row1;
@@ -887,20 +894,6 @@ static vec2 random_unit_vec21();
 static vec2 random_unit_vec22(float32 max_len);
 static float32 random01();
 static float32 random_range(int32 seed, float32 min, float32 max);
-static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex);
-static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id);
-static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex);
-static void draw_particles();
-static bool entity_is_dead(Entity e);
-static Entity* spawn_entity(vec2 pos, Texture2D tex);
-static void kill_entity(Entity* e);
-static void accelerate(Entity* e, vec2 acc);
-static void thrust(Entity* e, vec2 dir);
-static void turn_to(Entity* e, vec2 target);
-static void fire_gun(Entity* e);
-static void update_entity(Entity* e);
-static void update_ai(Entity* e);
-static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1);
 void __main();
 int32 fopen_s(FILE** stream, char* filename, char* mode);
 int32 fclose(FILE* stream);
@@ -1061,7 +1054,9 @@ static string to_string1(uint64 num);
 static bool string_equals(string a, string b);
 static bool starts_with(char* text, char* start);
 static string substr_until(char* str, char delim);
+static string substr_to_end(string str, char start);
 static char* trim_starting_whitespace(char* c_str);
+static string trim(string str, uint32 len);
 static bool is_whitespace(char c);
 static bool is_upper_case_letter(char c);
 static bool is_lower_case_letter(char c);
@@ -1073,6 +1068,7 @@ static bool is_punctuation(char c);
 static bool is_whitespace_or_empty(string str);
 static string alloc_string_copy1(char* str);
 static string alloc_string_copy2(string str);
+static uint32 lev(string a, string b);
 static string to_string2(StringBuilder sb);
 static StringBuilder sb_create();
 static void sb_free(StringBuilder sb);
@@ -1132,8 +1128,10 @@ float32 powf(float32 b, float32 e);
 static float32 random(int32 seed);
 static vec2 random_vec2(float32 x, float32 y);
 static float32 gnoise(float32 x, float32 y);
-static int32 min(int32 a, int32 b);
-static int32 max(int32 a, int32 b);
+static int32 min1(int32 a, int32 b);
+static int32 max1(int32 a, int32 b);
+static uint32 min2(uint32 a, uint32 b);
+static uint32 max2(uint32 a, uint32 b);
 static int32 clamp1(int32 t, int32 min, int32 max);
 static float32 clamp2(float32 t, float32 min, float32 max);
 static float32 lerp1(float32 t, float32 a, float32 b);
@@ -1253,6 +1251,8 @@ static bool key2(int32 c);
 static bool mouse(int32 btn);
 static bool mouse_pressed(int32 btn);
 static void input_update();
+static void input_state_reset();
+static void on_scroll(GLFWwindow* window, float64 x, float64 y);
 static void enable_cursor();
 static void disable_cursor();
 static void setup_vertex2D_attributes();
@@ -1290,6 +1290,20 @@ static Texture2D load_texture2D(char* name);
 static Texture2D create_texture2D(Image image);
 static void bind(Texture2D tex);
 static void set_filter(Texture2D tex, uint32 filter);
+static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex);
+static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id);
+static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex);
+static void draw_particles();
+static bool entity_is_dead(Entity e);
+static Entity* spawn_entity(vec2 pos, Texture2D tex);
+static void kill_entity(Entity* e);
+static void accelerate(Entity* e, vec2 acc);
+static void thrust(Entity* e, vec2 dir);
+static void turn_to(Entity* e, vec2 target);
+static void fire_gun(Entity* e);
+static void update_entity(Entity* e);
+static void update_ai(Entity* e);
+static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1);
 
 // Declarations
 static int32 global_seed = 0;
@@ -1300,7 +1314,6 @@ static Texture2D spaceship_from_internet;
 static Texture2D asteroid;
 static Texture2D projectile;
 static Texture2D particle;
-static Entity* player;
 static proc_glActiveShaderProgram glActiveShaderProgram = 0;
 static proc_glActiveTexture glActiveTexture = 0;
 static proc_glAttachShader glAttachShader = 0;
@@ -1858,17 +1871,19 @@ static float64 pmouse_x = 0;
 static float64 pmouse_y = 0;
 static float64 dmouse_x = 0;
 static float64 dmouse_y = 0;
+static float64 mouse_scroll = 0;
 static vec2 wasd;
 static GizmoPoint* gizmo_points_list;
 static Color gizmo_current_color = (Color){255, 255, 255, 255};
 static uint32 gizmo_points_vbo;
 static uint32 gizmo_points_vao;
 static Shader gizmo_points_shader;
+static Entity* player;
+static UBO** uniform_buffer_objects;
 static Entity* entity_pool;
 static Bullet* bullets;
 static Particle* particles;
 static BackgroundProp* background_props;
-static UBO** uniform_buffer_objects;
 static uint32 ships_index = 0;
 static uint32 particles_drawn_prev = 0;
 static uint32 entities_drawn_prev = 0;
@@ -1916,143 +1931,6 @@ static float32 random01() {
 }
 static float32 random_range(int32 seed, float32 min, float32 max) {
     return lerp1(((random(seed) + 1.000000) / 2.000000), min, max);
-}
-static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
-    BackgroundProp prop = (BackgroundProp) {0};
-    prop.tr.pos = pos;
-    prop.depth = depth;
-    prop.tr.scale = ((float32)tex.width / 16.000000);
-    prop.tex_handle = tex.gl_handle;
-    prop.tr.rot = (random(global_seed++) * 3.141593);
-    return list_add(&background_props, &prop);
-}
-static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
-    Bullet p = (Bullet) {pos, vel, team_id};
-    list_add(&bullets, &p);
-}
-static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
-    Particle p = (Particle) {0};
-    p.pos = pos;
-    p.vel = vel;
-    p.rot = (random(global_seed++) * 3.141593);
-    p.tex = tex;
-    p.life_time = (random01() * 2.500000);
-    list_add(&particles, &p);
-}
-static void draw_particles() {
-    float32 dt = (float32)deltatime;
-    uint32 count = list_length(particles);
-    for (int32 it = 0; it < count; it++) {
-        Particle* p = &particles[it];
-        p->pos = add1(p->pos, mul2(p->vel, dt));
-        p->vel = mul2(p->vel, random_range(it, 0.960000, 1));
-        p->life_time -= dt;
-        bind(p->tex);
-        Transform2D tr = (Transform2D) {p->pos, p->rot, 1};
-        apply_transform2(tr, 0.010000);
-        vec2 scale = (vec2) {p->tex.width, p->tex.height};
-        apply_entity_scale(mul2(scale, (1.000000 / 16.000000)));
-        /* local constant */
-        /* local constant */
-        apply_color(make_vec6(lerp3(p->life_time, (vec3){(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3){1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
-        draw_elements1(quad_db);
-        if (p->life_time < 0) list_unordered_remove(particles, (uint32)it);
-    }
-}
-static bool entity_is_dead(Entity e) {
-    return (e.hp == 0);
-}
-static Entity* spawn_entity(vec2 pos, Texture2D tex) {
-    Entity* e = 0;
-    for (int32 it = 0; it < 256; it++) {
-        if (entity_is_dead(entity_pool[it])) {
-            e = &entity_pool[it];
-            break;
-        }
-    }
-    if (e == 0) {
-        printf("%s", "Error: Exceded max entity count\n");
-    }
-    e->tr.pos = pos;
-    e->tr.scale = ((float32)tex.width / 16.000000);
-    e->depth = 0;
-    e->hp = 8;
-    e->tex_handle = tex.gl_handle;
-    e->tr.rot = (random(global_seed++) * 3.141593);
-    return e;
-}
-static void kill_entity(Entity* e) {
-    e->hp = 0;
-}
-static void accelerate(Entity* e, vec2 acc) {
-    e->vel = add1(e->vel, mul2(acc, (float32)deltatime));
-}
-static void thrust(Entity* e, vec2 dir) {
-    /* local constant */
-    dir.x *= 0.500000;
-    if (dir.y < 0) dir.y *= 0.500000;
-    dir = mul2(dir, 10);
-    accelerate(e, rotate_vec(dir, e->tr.rot));
-}
-static void turn_to(Entity* e, vec2 target) {
-    vec2 diff = sub1(target, e->tr.pos);
-    diff = rotate_vec(diff, -e->tr.rot);
-    float32 angle = vec2_to_angle(diff);
-    e->ang_vel = (angle * 10);
-}
-static void fire_gun(Entity* e) {
-    if (e->gun_recharge <= 0) {
-        vec2 disp = up(e->tr);
-        disp.x *= -1;
-        vec2 v = add1(mul2(disp, 50), e->vel);
-        /* local constant */
-        v = add1(v, random_unit_vec22(3));
-        spawn_bullet(add1(e->tr.pos, disp), v, e->team_id);
-        e->gun_recharge = 0.100000;
-    }
-}
-static void update_entity(Entity* e) {
-    e->tr.pos = add1(e->tr.pos, mul2(e->vel, (float32)deltatime));
-    e->tr.rot += (e->ang_vel * (float32)deltatime);
-    e->vel = mul2(e->vel, 0.990000);
-    e->gun_recharge -= (float32)deltatime;
-    vec4 color = (vec4){1, 1, 1, 1};
-    for (int32 it = 0; it < list_length(bullets); it++) {
-        Bullet p = bullets[it];
-        if (p.team_id == e->team_id) continue;
-        float32 intersection = circle_intersects(e->tr.pos, (e->tr.scale / 2), p.pos, 0.300000);
-        if (intersection < 0) {
-            color = (vec4) {100, 100, 100, 0};
-            e->hp--;
-            e->vel = add1(e->vel, mul2(p.vel, 0.004000));
-            list_unordered_remove(bullets, (uint32)it);
-            if (e->hp == 0) {
-                for (int32 it = 0; it < ((40 * e->tr.scale) * e->tr.scale); it++) {
-                    /* local constant */
-                    vec2 r = random_unit_vec22(7);
-                    spawn_particle(e->tr.pos, add1(e->vel, r), particle);
-                }
-                break;
-            }
-        }
-    }
-    apply_transform2(e->tr, e->depth);
-    apply_color(color);
-    glBindTexture(3553, e->tex_handle);
-    draw_elements1(quad_db);
-}
-static void update_ai(Entity* e) {
-    turn_to(e, player->tr.pos);
-    float32 dist = length1(sub1(e->tr.pos, player->tr.pos));
-    if (dist < 15) fire_gun(e);
-    float32 t = (dist - 5);
-    t = (t / abs1(t));
-    thrust(e, (vec2){0, t});
-}
-static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
-    float32 len = length1(sub1(p0, p1));
-    float32 r = (r0 + r1);
-    return (len - r);
 }
 void __main() {
     grax_init();
@@ -2852,9 +2730,17 @@ static string substr_until(char* str, char delim) {
     if (str[res.length] == delim) res.length++;
     return res;
 }
+static string substr_to_end(string str, char start) {
+    int64 i = (str.length - 1);
+    while ((i >= 0) && (str.chars[i] != start)) i--;
+    return (string) {&str.chars[i], (str.length - i)};
+}
 static char* trim_starting_whitespace(char* c_str) {
     while (is_whitespace(*c_str)) c_str++;
     return c_str;
+}
+static string trim(string str, uint32 len) {
+    return (string) {(str.chars + len), (str.length - len)};
 }
 static bool is_whitespace(char c) {
     return (((c == ' ') || (c == '\n')) || (c == '\t'));
@@ -2898,6 +2784,19 @@ static string alloc_string_copy2(string str) {
     }
     res.chars[str.length] = (char)0;
     return res;
+}
+static string tail(string str) {
+    return (string) {(str.chars + 1), (str.length - 1)};
+}
+static uint32 lev(string a, string b) {
+    // local procedure
+    if (a.length == 0) return b.length;
+    if (b.length == 0) return a.length;
+    if (a.chars[0] == b.chars[0]) return lev(tail(a), tail(b));
+    uint32 i = lev(tail(a), b);
+    i = min2(i, lev(a, tail(b)));
+    i = min2(i, lev(tail(a), tail(b)));
+    return (i + 1);
 }
 static string to_string2(StringBuilder sb) {
     return (string){sb.content, sb.length};
@@ -2970,6 +2869,7 @@ static vec2 window_size() {
 static int32 grax_loop() {
     dispatch_immediate();
     glfwSwapBuffers(main_window);
+    input_state_reset();
     glfwPollEvents();
     if (glfwWindowShouldClose(main_window)) {
         glfwDestroyWindow(main_window);
@@ -3014,6 +2914,7 @@ static void grax_init() {
     }
     glfwMakeContextCurrent(main_window);
     glfwSetFramebufferSizeCallback(main_window, on_resize);
+    glfwSetScrollCallback(main_window, on_scroll);
     load_opengl(glfwGetProcAddress);
     printf("%s%s", (char*)glGetString(7938), "\n");
     glEnable(37600);
@@ -3089,7 +2990,7 @@ static GLFWmonitor* get_ideal_monitor(GLFWwindow* window) {
         int32 mY;
         glfwGetMonitorPos(m, &mX, &mY);
         GLFWvidmode* mode = glfwGetVideoMode(m);
-        int32 area = (max(0, (min((x + w), (mX + mode->width)) - max(x, mX))) * max(0, (min((y + h), (mY + mode->height)) - max(y, mY))));
+        int32 area = (max1(0, (min1((x + w), (mX + mode->width)) - max1(x, mX))) * max1(0, (min1((y + h), (mY + mode->height)) - max1(y, mY))));
         if (area > highest_area) {
             highest_area = area;
             ideal = i;
@@ -3382,10 +3283,16 @@ static float32 gnoise(float32 x, float32 y) {
     float32 d4 = ((r.x * (fx - 1.000000)) + (r.y * (fy - 1.000000)));
     return lerp1(uy, lerp1(ux, d1, d2), lerp1(ux, d3, d4));
 }
-static int32 min(int32 a, int32 b) {
+static int32 min1(int32 a, int32 b) {
     return (a < b) ? a : b;
 }
-static int32 max(int32 a, int32 b) {
+static int32 max1(int32 a, int32 b) {
+    return (a < b) ? b : a;
+}
+static uint32 min2(uint32 a, uint32 b) {
+    return (a < b) ? a : b;
+}
+static uint32 max2(uint32 a, uint32 b) {
     return (a < b) ? b : a;
 }
 static int32 clamp1(int32 t, int32 min, int32 max) {
@@ -3845,7 +3752,7 @@ static void camera_fly_control(Camera* cam) {
         rotate2(&cam->transform, (vec3){0, 1, 0}, (float32)(dmouse_x / 100.000000));
     }
     cam->transform.position = add2(cam->transform.position, mul4(forward, (wasd.y / 10.000000)));
-    cam->transform.position = add2(cam->transform.position, mul4(left, (wasd.x / 10.000000)));
+    cam->transform.position = add2(cam->transform.position, mul4(left, (-wasd.x / 10.000000)));
 }
 static Image load_bitmap(char* filename) {
     typedef struct Header Header;
@@ -3953,6 +3860,12 @@ static void input_update() {
     if (key1('S')) wasd.y -= 1;
     if (key1('A')) wasd.x -= 1;
     if (key1('D')) wasd.x += 1;
+}
+static void input_state_reset() {
+    mouse_scroll = 0;
+}
+static void on_scroll(GLFWwindow* window, float64 x, float64 y) {
+    mouse_scroll = y;
 }
 static void enable_cursor() {
     glfwSetInputMode(main_window, 208897, 212993);
@@ -4405,12 +4318,149 @@ static void set_filter(Texture2D tex, uint32 filter) {
     glTexParameteri(3553, 10240, filter);
     glBindTexture(3553, 0);
 }
+static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
+    BackgroundProp prop = (BackgroundProp) {0};
+    prop.tr.pos = pos;
+    prop.depth = depth;
+    prop.tr.scale = ((float32)tex.width / 16.000000);
+    prop.tex_handle = tex.gl_handle;
+    prop.tr.rot = (random(global_seed++) * 3.141593);
+    return list_add(&background_props, &prop);
+}
+static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
+    Bullet p = (Bullet) {pos, vel, team_id};
+    list_add(&bullets, &p);
+}
+static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
+    Particle p = (Particle) {0};
+    p.pos = pos;
+    p.vel = vel;
+    p.rot = (random(global_seed++) * 3.141593);
+    p.tex = tex;
+    p.life_time = (random01() * 2.500000);
+    list_add(&particles, &p);
+}
+static void draw_particles() {
+    float32 dt = (float32)deltatime;
+    uint32 count = list_length(particles);
+    for (int32 it = 0; it < count; it++) {
+        Particle* p = &particles[it];
+        p->pos = add1(p->pos, mul2(p->vel, dt));
+        p->vel = mul2(p->vel, random_range(it, 0.960000, 1));
+        p->life_time -= dt;
+        bind(p->tex);
+        Transform2D tr = (Transform2D) {p->pos, p->rot, 1};
+        apply_transform2(tr, 0);
+        vec2 scale = (vec2) {p->tex.width, p->tex.height};
+        apply_entity_scale(mul2(scale, (1.000000 / 16.000000)));
+        /* local constant */
+        /* local constant */
+        apply_color(make_vec6(lerp3(p->life_time, (vec3){(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3){1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
+        draw_elements1(quad_db);
+        if (p->life_time < 0) list_unordered_remove(particles, (uint32)it);
+    }
+}
+static bool entity_is_dead(Entity e) {
+    return (e.hp == 0);
+}
+static Entity* spawn_entity(vec2 pos, Texture2D tex) {
+    Entity* e = 0;
+    for (int32 it = 0; it < 256; it++) {
+        if (entity_is_dead(entity_pool[it])) {
+            e = &entity_pool[it];
+            break;
+        }
+    }
+    if (e == 0) {
+        printf("%s", "Error: Exceded max entity count\n");
+    }
+    e->tr.pos = pos;
+    e->tr.scale = ((float32)tex.width / 16.000000);
+    e->depth = 0;
+    e->hp = 8;
+    e->tex_handle = tex.gl_handle;
+    e->tr.rot = (random(global_seed++) * 3.141593);
+    return e;
+}
+static void kill_entity(Entity* e) {
+    e->hp = 0;
+}
+static void accelerate(Entity* e, vec2 acc) {
+    e->vel = add1(e->vel, mul2(acc, (float32)deltatime));
+}
+static void thrust(Entity* e, vec2 dir) {
+    /* local constant */
+    dir.x *= 0.500000;
+    if (dir.y < 0) dir.y *= 0.500000;
+    dir = mul2(dir, 10);
+    accelerate(e, rotate_vec(dir, e->tr.rot));
+}
+static void turn_to(Entity* e, vec2 target) {
+    vec2 diff = sub1(target, e->tr.pos);
+    diff = rotate_vec(diff, -e->tr.rot);
+    float32 angle = vec2_to_angle(diff);
+    e->ang_vel = (angle * 10);
+}
+static void fire_gun(Entity* e) {
+    if (e->gun_recharge <= 0) {
+        vec2 disp = up(e->tr);
+        disp.x *= -1;
+        vec2 v = add1(mul2(disp, 50), e->vel);
+        /* local constant */
+        v = add1(v, random_unit_vec22(3));
+        spawn_bullet(add1(e->tr.pos, disp), v, e->team_id);
+        e->gun_recharge = 0.100000;
+    }
+}
+static void update_entity(Entity* e) {
+    e->tr.pos = add1(e->tr.pos, mul2(e->vel, (float32)deltatime));
+    e->tr.rot += (e->ang_vel * (float32)deltatime);
+    e->vel = mul2(e->vel, 0.990000);
+    e->gun_recharge -= (float32)deltatime;
+    vec4 color = (vec4){1, 1, 1, 1};
+    for (int32 it = 0; it < list_length(bullets); it++) {
+        Bullet p = bullets[it];
+        if (p.team_id == e->team_id) continue;
+        float32 intersection = circle_intersects(e->tr.pos, (e->tr.scale / 2), p.pos, 0.300000);
+        if (intersection < 0) {
+            color = (vec4) {100, 100, 100, 0};
+            e->hp--;
+            e->vel = add1(e->vel, mul2(p.vel, 0.004000));
+            list_unordered_remove(bullets, (uint32)it);
+            if (e->hp == 0) {
+                for (int32 it = 0; it < ((40 * e->tr.scale) * e->tr.scale); it++) {
+                    /* local constant */
+                    vec2 r = random_unit_vec22(7);
+                    spawn_particle(e->tr.pos, add1(e->vel, r), particle);
+                }
+                break;
+            }
+        }
+    }
+    apply_transform2(e->tr, e->depth);
+    apply_color(color);
+    glBindTexture(3553, e->tex_handle);
+    draw_elements1(quad_db);
+}
+static void update_ai(Entity* e) {
+    turn_to(e, player->tr.pos);
+    float32 dist = length1(sub1(e->tr.pos, player->tr.pos));
+    if (dist < 15) fire_gun(e);
+    float32 t = (dist - 5);
+    t = (t / abs1(t));
+    thrust(e, (vec2){0, t});
+}
+static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
+    float32 len = length1(sub1(p0, p1));
+    float32 r = (r0 + r1);
+    return (len - r);
+}
 static void __static_init() {
+    uniform_buffer_objects = (UBO**)list_create(sizeof(UBO*));
     entity_pool = calloc(1, (256 * sizeof(Entity)));
     bullets = list_create(sizeof(Bullet));
     particles = list_create(sizeof(Particle));
     background_props = list_create(sizeof(BackgroundProp));
-    uniform_buffer_objects = (UBO**)list_create(sizeof(UBO*));
     num_str = malloc(20);
 }
 int main(int argc, char** argv) {

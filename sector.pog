@@ -1,0 +1,219 @@
+
+
+const linear_drag = 0.99;
+
+const   entity_pool_count = 256;
+Entity* entity_pool = calloc(1, entity_pool_count * sizeof Entity);
+Entity* player;
+
+Bullet* bullets = list_create(sizeof Bullet);
+Particle* particles = list_create(sizeof Particle);
+
+BackgroundProp* background_props = list_create(sizeof BackgroundProp);
+
+
+
+struct Entity {
+    with Transform2D tr;
+    float32 depth;
+    vec2 vel;
+    float32 ang_vel;
+    uint32 hp;
+    uint32 tex_handle;
+    uint32 team_id;
+    float32 gun_recharge;
+}
+
+struct Bullet {
+    vec2 pos;
+    vec2 vel;
+    uint32 team_id;
+}
+
+struct BackgroundProp {
+    with Transform2D tr;
+    float32 depth;
+    uint32 tex_handle;
+}
+
+BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
+    BackgroundProp prop = {};
+    prop.tr.pos = pos;
+    prop.depth = depth;
+    prop.tr.scale = tex.width as float32 / 16.0;
+    prop.tex_handle = tex.gl_handle;
+
+    prop.tr.rot = random(global_seed++) * Pi;
+
+    return list_add(*background_props, *prop);
+}
+
+void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
+    Bullet p = {pos, vel, team_id};
+    list_add(*bullets, *p);
+}
+
+struct Particle {
+    vec2 pos;
+    float32 rot;
+    vec2 vel;
+    Texture2D tex;
+    float32 life_time;
+}
+
+void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
+    Particle p = {};
+    p.pos = pos;
+    p.vel = vel;
+    p.rot = random(global_seed++) * Pi;
+    p.tex = tex;
+    p.life_time = random01() * 2.5;
+    list_add(*particles, *p);
+}
+
+void draw_particles() {
+    let dt = deltatime as float32;
+    let count = list_length(particles);
+    for 0 .. count {
+        let p = *particles[it];
+        p.pos = add(p.pos, mul(p.vel, dt));
+        p.vel = mul(p.vel, random_range(it, 0.96, 1));
+        p.life_time -= dt;
+
+        bind(p.tex);
+        Transform2D tr = {p.pos, p.rot, 1};
+        apply_transform(tr, 0);
+        vec2 scale = { p.tex.width, p.tex.height };
+        apply_entity_scale(mul(scale, 1.0 / 16.0));
+        const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
+        const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
+        apply_color(make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time));
+        draw_elements(quad_db);
+
+        if p.life_time < 0  list_unordered_remove(particles, it as uint32); // TODO: fix this remove in iterator
+    }
+}
+
+bool entity_is_dead(Entity e) { return e.hp == 0; }
+
+Entity* spawn_entity(vec2 pos, Texture2D tex) {
+    Entity* e = null;
+
+    for 0 .. entity_pool_count {
+        if entity_is_dead(entity_pool[it]) {
+            e = *entity_pool[it];
+            break;
+        }
+    }
+
+    if e == null {
+        print("Error: Exceded max entity count\n");
+    }
+
+    e.tr.pos = pos;
+    e.tr.scale = tex.width as float32 / 16.0;
+    e.depth = 0;
+    e.hp = 8;
+    e.tex_handle = tex.gl_handle;
+
+    e.tr.rot = random(global_seed++) * Pi;
+
+    return e;
+}
+
+void kill_entity(Entity* e) {
+    e.hp = 0;
+}
+
+void accelerate(Entity* e, vec2 acc) {
+    e.vel = add(e.vel, mul(acc, deltatime as float32));
+}
+
+// note: |dir.x| <= 1 and |dir.y| <= 1
+void thrust(Entity* e, vec2 dir) {
+    const non_forward_factor = 0.5;
+
+    dir.x *= non_forward_factor;
+    if dir.y < 0  dir.y *= non_forward_factor;
+
+    dir = mul(dir, 10);
+
+    accelerate(e, rotate_vec(dir, e.tr.rot));
+}
+
+void turn_to(Entity* e, vec2 target) {
+    let diff = sub(target, e.tr.pos);
+    diff = rotate_vec(diff, -e.tr.rot);
+    float32 angle = vec2_to_angle(diff);
+
+    e.ang_vel = angle * 10;
+}
+
+void fire_gun(Entity* e) {
+    if e.gun_recharge <= 0 {
+        let disp = up(e.tr);
+        disp.x *= -1;
+        let v = add(mul(disp, 50), e.vel);
+        const spread = 3;
+        v = add(v, random_unit_vec2(spread));
+        spawn_bullet(add(e.tr.pos, disp), v, e.team_id);
+        e.gun_recharge = 0.1;
+    }
+}
+
+void update_entity(Entity* e) {
+    e.tr.pos = add(e.tr.pos, mul(e.vel, deltatime as float32));
+    e.tr.rot += e.ang_vel * deltatime as float32;
+    e.vel = mul(e.vel, linear_drag);
+    // e.ang_vel *= 0.99;
+
+    e.gun_recharge -= deltatime as float32;
+
+    vec4 color = vec4_one;
+
+    for 0 .. list_length(bullets) {
+        let p = bullets[it];
+        if p.team_id == e.team_id continue;
+
+        float32 intersection = circle_intersects(e.tr.pos, e.tr.scale / 2, p.pos, 0.3);
+        if intersection < 0 {
+            color = {100, 100, 100, 0};
+            e.hp--;
+            e.vel = add(e.vel, mul(p.vel, 0.004));
+            list_unordered_remove(bullets, it as uint32);
+
+            if e.hp == 0 {
+                for 0 .. 40 * e.tr.scale * e.tr.scale {
+                    const spread = 7;
+                    vec2 r = random_unit_vec2(spread);
+                    spawn_particle(e.tr.pos, add(e.vel, r), particle);
+                }
+                break;
+            }
+        }
+    }
+
+    apply_transform(e.tr, e.depth);
+    apply_color(color);
+    glBindTexture(GL_TEXTURE_2D, e.tex_handle);
+    draw_elements(quad_db);
+}
+
+void update_ai(Entity* e) {
+
+    // look_at(*e.tr, player.tr.pos);
+    turn_to(e, player.tr.pos);
+    let dist = length(sub(e.tr.pos, player.tr.pos));
+
+    if dist < 15  fire_gun(e);
+
+    let t = dist - 5;
+    t = t / abs(t);
+    thrust(e, { 0, t } as vec2);
+}
+
+float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
+    let len = length(sub(p0, p1));
+    let r = r0 + r1;
+    return len - r;
+}
