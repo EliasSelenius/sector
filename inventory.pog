@@ -1,0 +1,22 @@
+
+enum ItemKind {
+    none; rock;
+}
+
+struct Item {
+    ItemKind kind;
+    uint16 stack_count;
+}
+
+struct Cargo {
+    Item* items;
+    uint32 capacity;
+}
+
+void drop_cargo(Entity* en, Cargo* cargo) {
+
+}
+
+void draw_inventory() {
+
+}

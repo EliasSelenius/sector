@@ -1,19 +1,33 @@
 
 
+// struct QuadTreeNode {
+//     QuadTreeNode* q1, q2, q3, q4;
+//     Entity* e;
+// }
+
+// QuadTreeNode* insert(QuadTreeNode* node, vec2 pos, float32 size, Entity* e) {
+//     if node == null  node = alloc QuadTreeNode;
+//     if node.e {
+//     }
+//     node.e = e;
+// }
+
+
+
+
 const linear_drag = 0.99;
 
-const   entity_pool_count = 256;
-Entity* entity_pool = calloc(1, entity_pool_count * sizeof Entity);
-Entity* player;
+// TODO: definitely should use arena for entity pools so we dont have to worry about reference invalidation due to list resize
+Entity* global_entity_pool = list_create(sizeof Entity);
+Entity* get_player() { return *global_entity_pool[0]; }
 
 Bullet* bullets = list_create(sizeof Bullet);
 Particle* particles = list_create(sizeof Particle);
 
-BackgroundProp* background_props = list_create(sizeof BackgroundProp);
-
-
 
 struct Entity {
+    void(Entity*) behaviour;
+
     with Transform2D tr;
     float32 depth;
     vec2 vel;
@@ -30,35 +44,18 @@ struct Bullet {
     uint32 team_id;
 }
 
-struct BackgroundProp {
-    with Transform2D tr;
-    float32 depth;
-    uint32 tex_handle;
-}
-
-BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
-    BackgroundProp prop = {};
-    prop.tr.pos = pos;
-    prop.depth = depth;
-    prop.tr.scale = tex.width as float32 / 16.0;
-    prop.tex_handle = tex.gl_handle;
-
-    prop.tr.rot = random(global_seed++) * Pi;
-
-    return list_add(*background_props, *prop);
-}
-
-void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
-    Bullet p = {pos, vel, team_id};
-    list_add(*bullets, *p);
-}
-
 struct Particle {
     vec2 pos;
     float32 rot;
     vec2 vel;
     Texture2D tex;
     float32 life_time;
+}
+
+
+void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
+    Bullet p = {pos, vel, team_id};
+    list_add(*bullets, *p);
 }
 
 void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
@@ -69,6 +66,13 @@ void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
     p.tex = tex;
     p.life_time = random01() * 2.5;
     list_add(*particles, *p);
+}
+
+void spawn_explosion(uint32 size, vec2 pos, vel, float32 spread) {
+    for 0 .. 40 * size * size {
+        vec2 r = random_unit_vec2(spread);
+        spawn_particle(pos, add(vel, r), particle);
+    }
 }
 
 void draw_particles() {
@@ -94,35 +98,21 @@ void draw_particles() {
     }
 }
 
+void kill_entity(Entity* e) { e.hp = 0; }
 bool entity_is_dead(Entity e) { return e.hp == 0; }
 
-Entity* spawn_entity(vec2 pos, Texture2D tex) {
-    Entity* e = null;
+Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
+    Entity* e = list_append(pool);
 
-    for 0 .. entity_pool_count {
-        if entity_is_dead(entity_pool[it]) {
-            e = *entity_pool[it];
-            break;
-        }
-    }
-
-    if e == null {
-        print("Error: Exceded max entity count\n");
-    }
-
+    @e = {};
     e.tr.pos = pos;
+    e.tr.rot = 0;
     e.tr.scale = tex.width as float32 / 16.0;
     e.depth = 0;
     e.hp = 8;
     e.tex_handle = tex.gl_handle;
 
-    e.tr.rot = random(global_seed++) * Pi;
-
     return e;
-}
-
-void kill_entity(Entity* e) {
-    e.hp = 0;
 }
 
 void accelerate(Entity* e, vec2 acc) {
@@ -183,11 +173,7 @@ void update_entity(Entity* e) {
             list_unordered_remove(bullets, it as uint32);
 
             if e.hp == 0 {
-                for 0 .. 40 * e.tr.scale * e.tr.scale {
-                    const spread = 7;
-                    vec2 r = random_unit_vec2(spread);
-                    spawn_particle(e.tr.pos, add(e.vel, r), particle);
-                }
+                spawn_explosion(e.tr.scale, e.tr.pos, e.vel, 7);
                 break;
             }
         }
@@ -197,13 +183,14 @@ void update_entity(Entity* e) {
     apply_color(color);
     glBindTexture(GL_TEXTURE_2D, e.tex_handle);
     draw_elements(quad_db);
+
+    if e.behaviour  e.behaviour(e);
 }
 
 void update_ai(Entity* e) {
 
-    // look_at(*e.tr, player.tr.pos);
-    turn_to(e, player.tr.pos);
-    let dist = length(sub(e.tr.pos, player.tr.pos));
+    turn_to(e, get_player().tr.pos);
+    let dist = length(sub(e.tr.pos, get_player().tr.pos));
 
     if dist < 15  fire_gun(e);
 
@@ -216,4 +203,147 @@ float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     let len = length(sub(p0, p1));
     let r = r0 + r1;
     return len - r;
+}
+
+
+void update_entities() {
+
+    draw_background(camera.pos);
+
+    ivec2 chunk_coord = get_chunk_coord(get_player().tr.pos);
+
+    const bot_left = 0;
+    const bot_right = 1;
+    const top_left = 2;
+    const top_right = 3;
+    ivec2[] chunk_coord_offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+    Chunk*[] chunks = {*chunk_1, *chunk_2, *chunk_3, *chunk_4};
+    int32 coord_index = 0;
+    ivec2[] coords = {{},{},{},{}};
+
+    for it : 0 .. 4 {
+        ivec2 coord = add(chunk_coord, chunk_coord_offsets[it]);
+
+        if      equals(coord, chunk_1.coord) { chunks[0] = null; continue; }
+        else if equals(coord, chunk_2.coord) { chunks[1] = null; continue; }
+        else if equals(coord, chunk_3.coord) { chunks[2] = null; continue; }
+        else if equals(coord, chunk_4.coord) { chunks[3] = null; continue; }
+        else {
+            coords[coord_index++] = coord;
+        }
+    }
+
+    coord_index = 0;
+    for 0 .. chunks.length {
+        if chunks[it] == null  continue;
+
+        spawn_chunk(chunks[it], coords[coord_index++]);
+    }
+
+
+
+    void update_entity_list(Entity* ens) {
+        for 0 .. list_length(ens) {
+            let e = *ens[it];
+            if entity_is_dead(@e) continue;
+            update_entity(e);
+        }
+    }
+
+    update_entity_list(global_entity_pool);
+    update_entity_list(chunk_1.entities);
+    update_entity_list(chunk_2.entities);
+    update_entity_list(chunk_3.entities);
+    update_entity_list(chunk_4.entities);
+
+
+
+    bind(projectile);
+    uint32 bullets_count = list_length(bullets);
+    for 0 .. bullets_count {
+        let p = *bullets[it];
+
+
+        Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
+        apply_transform(tr);
+
+        vec2 particle_scale = {0.25, 1}; // TODO: hard coded dimentions here
+        apply_entity_scale(particle_scale);
+        draw_elements(quad_db);
+
+        p.pos = add(p.pos, mul(p.vel, deltatime as float32));
+    }
+
+
+    disable_depth_test();
+    draw_particles();
+}
+
+void draw_background(vec2 center) {
+    const s = 10;
+    const spacing = 10;
+    for x : -s .. s+1 for y : -s .. s+1 {
+        ivec2 p_seed = make_ivec(round2multiple(center, spacing));
+        p_seed.x += x * spacing; p_seed.y += y * spacing;
+
+        int32 seed = p_seed.x + p_seed.y * 100;
+
+        float32 depth = map(random(seed++), -1, 1, 0.3, 1.0);
+        Transform2D tr = {};
+        tr.pos = add(make_vec(p_seed), mul(make_vec(random(seed++), random(seed++)), spacing / 2.0));
+        tr.rot = random(seed++) * Pi;
+        tr.scale = asteroid.width as float32 / 16.0;
+
+        apply_transform(tr, depth);
+        apply_color(vec4_one);
+        bind(asteroid);
+        draw_elements(quad_db);
+    }
+}
+
+const chunk_size = 10;
+
+Chunk chunk_1 = init_chunk();
+Chunk chunk_2 = init_chunk();
+Chunk chunk_3 = init_chunk();
+Chunk chunk_4 = init_chunk();
+
+
+struct Chunk {
+    ivec2 coord;
+    Entity* entities;
+}
+
+ivec2 get_chunk_coord(vec2 pos) {
+    return make_ivec(mul(round2multiple(pos, chunk_size), 1.0 / chunk_size));
+}
+
+Chunk init_chunk() {
+    Chunk s = {};
+    s.coord = {999, 999}; // NOTE: this is to fix bug where chunk 0,0 wont generate at game start
+    s.entities = list_create(sizeof Entity);
+    return s;
+}
+
+void spawn_chunk(Chunk* chunk, ivec2 coord) {
+    chunk.coord = coord;
+    list_clear(chunk.entities);
+
+    int32 seed = (coord.x & 0x0000FFFF) |
+                ((coord.y << 16) & 0xFFFF0000);
+
+    print("spawn chunk ", coord, " with seed: ", seed, "\n");
+
+    const half = chunk_size / 2;
+    vec2 chunk_pos = make_vec(sub(mul(coord, chunk_size), { half, half } as ivec2));
+
+    // init interactable asteroids
+    for 0 .. 5 {
+        const d = chunk_size / 2;
+        vec2 pos = { random(seed++) * d, random(seed++) * d };
+        let e = spawn_entity(*chunk.entities, add(pos, chunk_pos), asteroid);
+        e.team_id = 2;
+        e.hp = 10;
+        e.depth = 0.01;
+    }
 }

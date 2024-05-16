@@ -40,10 +40,12 @@ typedef struct Transform Transform;
 typedef struct Transform2D Transform2D;
 typedef struct Camera Camera;
 typedef struct Image Image;
+typedef struct InputState InputState;
 typedef struct vertex3D vertex3D;
 typedef struct vertex2D vertex2D;
 typedef struct Mesh Mesh;
 typedef struct DrawBuffers DrawBuffers;
+typedef struct VertexAttributeInfo VertexAttributeInfo;
 typedef struct GizmoPoint GizmoPoint;
 typedef struct OBJ_Data OBJ_Data;
 typedef struct OBJ_VertexIndices OBJ_VertexIndices;
@@ -51,13 +53,21 @@ typedef struct OBJ_Object OBJ_Object;
 typedef struct Color Color;
 typedef struct ColorRgb ColorRgb;
 typedef struct Framebuffer Framebuffer;
+typedef struct FramebufferAttachment FramebufferAttachment;
 typedef struct Texture2D Texture2D;
 typedef struct Entity Entity;
 typedef struct Bullet Bullet;
-typedef struct BackgroundProp BackgroundProp;
 typedef struct Particle Particle;
+typedef struct Chunk Chunk;
+typedef struct Item Item;
+typedef struct Cargo Cargo;
 
 // Enums
+typedef uint32 VertexAttributeType;
+typedef uint32 TextureFormat;
+typedef uint32 TextureFilter;
+typedef uint32 TextureWrapMode;
+typedef uint32 ItemKind;
 
 // Type aliases
 typedef uint8 bool;
@@ -695,12 +705,6 @@ struct StringReader {
 struct Shader {
     uint32 gl_handle;
 };
-struct Trianglebatch {
-    vertex2D* vertices;
-    uint32* indices;
-    Shader* shader;
-    Texture2D* texture;
-};
 struct vec2 {
     float32 x;
     float32 y;
@@ -748,6 +752,12 @@ struct DrawBuffers {
     uint32 ebo;
     int32 elements_count;
 };
+struct VertexAttributeInfo {
+    GLenum _type;
+    int32 count;
+    uint32 bytesize;
+    bool normalized;
+};
 struct OBJ_VertexIndices {
     uint32 pos;
     uint32 text_coord;
@@ -768,11 +778,25 @@ struct Framebuffer {
     uint32 width;
     uint32 height;
     uint32 gl_handle;
+    uint32 depth_buffer_handle;
+    Array attachments;
+};
+struct FramebufferAttachment {
+    uint32 gl_handle;
+    TextureFormat format;
 };
 struct Texture2D {
     uint32 width;
     uint32 height;
     uint32 gl_handle;
+};
+struct Item {
+    ItemKind kind;
+    uint16 stack_count;
+};
+struct Cargo {
+    Item* items;
+    uint32 capacity;
 };
 struct SR_Token {
     string str;
@@ -803,6 +827,10 @@ struct OBJ_Object {
     uint32 indices_length;
     char group_type;
 };
+struct Chunk {
+    ivec2 coord;
+    Entity* entities;
+};
 struct mat2 {
     vec2 row1;
     vec2 row2;
@@ -825,10 +853,12 @@ struct Bullet {
     vec2 vel;
     uint32 team_id;
 };
-struct BackgroundProp {
-    Transform2D tr;
-    float32 depth;
-    uint32 tex_handle;
+struct Trianglebatch {
+    vertex2D* vertices;
+    uint32* indices;
+    DrawBuffers draw_buffers;
+    Shader shader;
+    Texture2D texture;
 };
 struct mat3 {
     vec3 row1;
@@ -839,6 +869,12 @@ struct Transform {
     vec3 position;
     vec3 scale;
     quat rotation;
+};
+struct InputState {
+    vec2 mouse_pos;
+    vec2 wasd;
+    vec2 unit_wasd;
+    float32 mouse_scroll;
 };
 struct vertex3D {
     vec3 pos;
@@ -851,6 +887,7 @@ struct vertex2D {
     Color color;
 };
 struct Entity {
+    void (*behaviour)(Entity*);
     Transform2D tr;
     float32 depth;
     vec2 vel;
@@ -894,7 +931,9 @@ static vec2 random_unit_vec21();
 static vec2 random_unit_vec22(float32 max_len);
 static float32 random01();
 static float32 random_range(int32 seed, float32 min, float32 max);
+static void loadassets();
 void __main();
+static void drawframe();
 int32 fopen_s(FILE** stream, char* filename, char* mode);
 int32 fclose(FILE* stream);
 int32 fseek(FILE* stream, int32 offset, int32 origin);
@@ -923,9 +962,11 @@ static void list_delete(void* list);
 static void list_clear(void* list);
 static void list_grow(void** list, uint32 new_capacity);
 static void* list_add(void** list, void* data);
+static void* list_append(void** list);
 static void* list_get(void* list, uint32 index);
 static void* list_last_item(void* list);
 static void list_unordered_remove(void* list, uint32 index);
+static void* list_pop(void* list);
 static void load_opengl(void (*(*getProcAddress)(char*))());
 int32 glfwInit();
 void glfwTerminate();
@@ -1058,6 +1099,7 @@ static string substr_to_end(string str, char start);
 static char* trim_starting_whitespace(char* c_str);
 static string trim(string str, uint32 len);
 static bool is_whitespace(char c);
+static bool is_whitespace_or_null(char c);
 static bool is_upper_case_letter(char c);
 static bool is_lower_case_letter(char c);
 static bool is_letter(char c);
@@ -1080,16 +1122,25 @@ static void sb_insert(StringBuilder* sb, int32 loc, string str);
 static void sb_remove(StringBuilder* sb, int32 loc, uint32 num_chars);
 static void sb_clear(StringBuilder* sb);
 static vec2 window_size();
-static int32 grax_loop();
+static bool grax_loop();
 static void grax_init();
 static void on_resize(GLFWwindow* window, int32 w, int32 h);
 static void opengl_debug_callback(GLenum source, GLenum _type, GLuint id, GLenum severity, GLsizei length, GLchar* message, void* userParam);
 static GLFWmonitor* get_ideal_monitor(GLFWwindow* window);
 static void toggle_fullscreen(GLFWwindow* window);
-static void disable_blending();
 static void enable_alpha_blending();
+static void enable_additive_blending();
+static void disable_blending();
 static void enable_depth_test();
 static void disable_depth_test();
+static void set_clear_color1(float32 r, float32 g, float32 b, float32 a);
+static void set_clear_color2(Color color);
+static void set_clear_depth(float64 depth);
+static void clear_color1();
+static void clear_color2(float32 r, float32 g, float32 b, float32 a);
+static void clear_color3(Color color);
+static void clear_depth1();
+static void clear_depth2(float64 depth);
 static void use(Shader* s);
 static UBO* get_ubo1(char* name);
 static UBO* get_ubo2(string name);
@@ -1098,6 +1149,7 @@ static void process_glsl_source(StringBuilder* sb, char* filename);
 static Shader load_shader1(char* filename);
 static Shader load_shader2(char* frag_filename, char* vert_filename);
 static Shader create_shader(char* fragsrc, char* vertsrc);
+static void init_immediate_renderer();
 static void dispatch_immediate();
 static void immediate_vertex1(float32 x, float32 y, float32 u, float32 v);
 static void immediate_vertex2(float32 x, float32 y, float32 u, float32 v, Color color);
@@ -1136,12 +1188,13 @@ static int32 clamp1(int32 t, int32 min, int32 max);
 static float32 clamp2(float32 t, float32 min, float32 max);
 static float32 lerp1(float32 t, float32 a, float32 b);
 static float32 map(float32 t, float32 a, float32 b, float32 c, float32 d);
-static int32 round2int(float32 x);
 static float32 fract(float32 x);
+static float32 round1(float32 x);
+static float32 round2multiple1(float32 x, float32 n);
 static float32 abs1(float32 x);
 static float64 abs2(float64 x);
-static int32 is_nan1(float32 x);
-static int32 is_nan2(vec2 v);
+static bool is_nan1(float32 x);
+static bool is_nan2(vec2 v);
 static vec2 make_vec1(float32 x, float32 y);
 static vec3 make_vec2(float32 x, float32 y, float32 z);
 static vec4 make_vec3(float32 x, float32 y, float32 z, float32 w);
@@ -1149,88 +1202,119 @@ static vec3 make_vec4(vec2 xy, float32 z);
 static vec3 make_vec5(float32 x, vec2 yz);
 static vec4 make_vec6(vec3 xyz, float32 w);
 static vec4 make_vec7(float32 x, vec3 yzw);
+static vec2 make_vec8(ivec2 v);
+static vec3 make_vec9(ivec3 v);
+static vec4 make_vec10(ivec4 v);
+static ivec2 make_ivec1(vec2 v);
+static ivec3 make_ivec2(vec3 v);
+static ivec4 make_ivec3(vec4 v);
+static bool equals1(ivec2 a, ivec2 b);
+static bool equals2(ivec3 a, ivec3 b);
+static bool equals3(ivec4 a, ivec4 b);
+static vec2 round2(vec2 v);
+static vec3 round3(vec3 v);
+static vec4 round4(vec4 v);
+static vec2 round2multiple2(vec2 v, float32 n);
+static vec3 round2multiple3(vec3 v, float32 n);
+static vec4 round2multiple4(vec4 v, float32 n);
 static vec2 sub1(vec2 a, vec2 b);
-static vec2 add1(vec2 a, vec2 b);
-static vec2 mul1(vec2 a, vec2 b);
-static vec2 mul2(vec2 a, float32 s);
-static vec2 neg1(vec2 a);
 static vec3 sub2(vec3 a, vec3 b);
-static vec3 add2(vec3 a, vec3 b);
-static vec3 mul3(vec3 a, vec3 b);
-static vec3 mul4(vec3 a, float32 s);
-static vec3 neg2(vec3 a);
 static vec4 sub3(vec4 a, vec4 b);
+static ivec2 sub4(ivec2 a, ivec2 b);
+static ivec3 sub5(ivec3 a, ivec3 b);
+static ivec4 sub6(ivec4 a, ivec4 b);
+static vec2 add1(vec2 a, vec2 b);
+static vec3 add2(vec3 a, vec3 b);
 static vec4 add3(vec4 a, vec4 b);
-static vec4 mul5(vec4 a, vec4 b);
-static vec4 mul6(vec4 a, float32 s);
+static ivec2 add4(ivec2 a, ivec2 b);
+static ivec3 add5(ivec3 a, ivec3 b);
+static ivec4 add6(ivec4 a, ivec4 b);
+static vec2 mul1(vec2 a, vec2 b);
+static vec3 mul2(vec3 a, vec3 b);
+static vec4 mul3(vec4 a, vec4 b);
+static ivec2 mul4(ivec2 a, ivec2 b);
+static ivec3 mul5(ivec3 a, ivec3 b);
+static ivec4 mul6(ivec4 a, ivec4 b);
+static vec2 mul7(vec2 a, float32 s);
+static vec3 mul8(vec3 a, float32 s);
+static vec4 mul9(vec4 a, float32 s);
+static ivec2 mul10(ivec2 a, int32 s);
+static ivec3 mul11(ivec3 a, int32 s);
+static ivec4 mul12(ivec4 a, int32 s);
+static vec2 neg1(vec2 a);
+static vec3 neg2(vec3 a);
 static vec4 neg3(vec4 a);
+static ivec2 neg4(ivec2 a);
+static ivec3 neg5(ivec3 a);
+static ivec4 neg6(ivec4 a);
 static float32 angle1(vec2 a, vec2 b);
 static float32 angle2(vec3 a, vec3 b);
 static float32 angle3(vec4 a, vec4 b);
 static float32 dot1(vec2 a, vec2 b);
-static float32 sqlength1(vec2 a);
-static float32 length1(vec2 a);
-static vec2 normalize1(vec2 a);
-static vec2 reflect1(vec2 a, vec2 normal);
-static vec2 lerp2(float32 t, vec2 a, vec2 b);
 static float32 dot2(vec3 a, vec3 b);
-static float32 sqlength2(vec3 a);
-static float32 length2(vec3 a);
-static vec3 normalize2(vec3 a);
-static vec3 reflect2(vec3 a, vec3 normal);
-static vec3 lerp3(float32 t, vec3 a, vec3 b);
-static vec3 cross(vec3 a, vec3 b);
 static float32 dot3(vec4 a, vec4 b);
-static float32 sqlength3(vec4 a);
-static float32 length3(vec4 a);
-static vec4 normalize3(vec4 a);
+static vec2 reflect1(vec2 a, vec2 normal);
+static vec3 reflect2(vec3 a, vec3 normal);
 static vec4 reflect3(vec4 a, vec4 normal);
+static vec2 normalize1(vec2 a);
+static vec3 normalize2(vec3 a);
+static vec4 normalize3(vec4 a);
+static vec2 lerp2(float32 t, vec2 a, vec2 b);
+static vec3 lerp3(float32 t, vec3 a, vec3 b);
 static vec4 lerp4(float32 t, vec4 a, vec4 b);
+static float32 sqlength1(vec2 a);
+static float32 sqlength2(vec3 a);
+static float32 sqlength3(vec4 a);
+static float32 length1(vec2 a);
+static float32 length2(vec3 a);
+static float32 length3(vec4 a);
 static vec2 xy1(vec3 a);
 static vec2 xy2(vec4 a);
 static vec3 xyz(vec4 a);
+static vec3 cross(vec3 a, vec3 b);
 static mat2 mat2_identity();
 static vec2 col11(mat2 m);
 static vec2 col21(mat2 m);
 static mat2 transpose1(mat2 m);
 static float32 det(mat2 m);
-static mat2 mul7(mat2 a, mat2 b);
-static vec2 mul8(mat2 m, vec2 v);
-static vec2 mul9(vec2 v, mat2 m);
+static mat2 mul13(mat2 a, mat2 b);
+static vec2 mul14(mat2 m, vec2 v);
+static vec2 mul15(vec2 v, mat2 m);
 static mat3 mat3_identity();
 static vec3 col12(mat3 m);
 static vec3 col22(mat3 m);
 static vec3 col31(mat3 m);
 static mat3 transpose2(mat3 m);
-static mat3 mul10(mat3 a, mat3 b);
-static vec3 mul11(mat3 m, vec3 v);
-static vec3 mul12(vec3 v, mat3 m);
+static mat3 mul16(mat3 a, mat3 b);
+static vec3 mul17(mat3 m, vec3 v);
+static vec3 mul18(vec3 v, mat3 m);
 static mat4 mat4_identity();
 static vec4 col13(mat4 m);
 static vec4 col23(mat4 m);
 static vec4 col32(mat4 m);
 static vec4 col4(mat4 m);
 static mat4 transpose3(mat4 m);
-static mat4 mul13(mat4 a, mat4 b);
-static vec4 mul14(mat4 m, vec4 v);
-static vec4 mul15(vec4 v, mat4 m);
+static mat4 mul19(mat4 a, mat4 b);
+static vec4 mul20(mat4 m, vec4 v);
+static vec4 mul21(vec4 v, mat4 m);
 static mat4 perspective(float32 fovy, float32 aspect, float32 near_depth, float32 far_depth);
 static mat4 perspective_off_center(float32 left, float32 right, float32 bottom, float32 top, float32 near_depth, float32 far_depth);
 static quat conj(quat q);
 static quat normalize4(quat q);
-static quat sub4(quat a, quat b);
-static quat add4(quat a, quat b);
-static quat mul16(quat a, float32 s);
 static quat lerp5(float32 t, quat a, quat b);
 static quat nlerp(float32 t, quat a, quat b);
-static quat mul17(quat l, quat r);
+static quat sub7(quat a, quat b);
+static quat add7(quat a, quat b);
+static quat mul22(quat a, float32 s);
+static quat mul23(quat l, quat r);
 static quat axisangle2quat(vec3 axis, float32 angle);
 static mat4 quat2matrix(quat q);
 static mat4 to_matrix(Transform t);
 static Transform transform_default();
 static void rotate1(Transform* tr, quat q);
 static void rotate2(Transform* tr, vec3 axis, float32 angle);
-static void translate(Transform* tr, vec3 t);
+static void translate1(Transform* tr, vec3 t);
+static void translate2(Transform* tr, float32 x, float32 y, float32 z);
 static void look_at1(Transform* tr, vec3 target, vec3 up);
 static Transform2D lerp6(float32 t, Transform2D a, Transform2D b);
 static vec2 right(Transform2D t);
@@ -1242,9 +1326,11 @@ static vec2 world2local2(Transform2D t, float32 x, float32 y);
 static float32 vec2_to_angle(vec2 v);
 static void look_at2(Transform2D* tr, vec2 target);
 static vec2 rotate_vec(vec2 dir, float32 angle);
-static Camera camera(float32 fov, float32 near, float32 far);
+static Camera make_camera(float32 fov, float32 near, float32 far);
 static void update_matrices(Camera* cam);
 static void camera_fly_control(Camera* cam);
+static vec2 screen2ndc(float32 x, float32 y);
+static vec3 camera_ray(Camera cam, vec2 ndc);
 static Image load_bitmap(char* filename);
 static bool key1(char c);
 static bool key2(int32 c);
@@ -1255,25 +1341,31 @@ static void input_state_reset();
 static void on_scroll(GLFWwindow* window, float64 x, float64 y);
 static void enable_cursor();
 static void disable_cursor();
+static VertexAttributeInfo get_vertex_attribute_info(VertexAttributeType datatype);
+static uint32 set_vertex_attribute_pointer(uint32 index, VertexAttributeType datatype, int32 stride, uint32 offset);
+static void init_vertex_layout(int32 stride, Array attribs);
 static void setup_vertex2D_attributes();
 static void setup_vertex3D_attributes();
 static DrawBuffers create_draw_buffers1(Mesh mesh);
 static DrawBuffers create_draw_buffers2();
-static void update_buffers(DrawBuffers* db, vertex2D* vertices, uint32 vertices_count, uint32* indices, uint32 indices_count);
+static void update_buffers1(DrawBuffers* db, Array vertices, Array indices);
+static void update_buffers2(DrawBuffers* db, vertex2D* vertices, uint32 vertices_count, uint32* indices, uint32 indices_count);
 static void update_buffer(uint32 buffer, uint32 size, void* data);
 static void draw_elements1(DrawBuffers db);
 static void draw_elements2(DrawBuffers db, uint32 instanceCount);
 static void gen_normals(Mesh mesh);
 static void flip_indices1(Mesh mesh);
 static void flip_indices2(Mesh mesh, uint32 base, uint32 len);
-static Mesh gen_plane(uint32 size);
+static Mesh gen_plane1(uint32 size);
+static Mesh gen_plane2(uint32 size, float32 uv_scale);
 static void gizmo_setup();
 static void gizmo_dispatch();
 static void gizmo_point1(vec3 pos);
 static void gizmo_point2(vec3 pos, float32 size);
 static void gizmo_point3(vec3 pos, Color color);
 static void gizmo_point4(vec3 pos, Color color, float32 size);
-static void gizmo_transform1(Transform* tr);
+static bool gizmo_transform1(Transform* tr, Camera cam);
+static bool gizmo_transform_axis(Transform* tr, vec3 ray, vec3 axis, Color color, Camera cam);
 static void gizmo_transform2(Transform2D* tr);
 static void gizmo_sphere(vec3 center, float32 radius);
 static void gizmo_golden_sphere(uint32 n, vec3 center, float32 radius);
@@ -1281,22 +1373,42 @@ static void free_obj(OBJ_Data obj);
 static OBJ_Data load_obj(char* filename);
 static Mesh obj_to_mesh(OBJ_Data obj);
 static Mesh obj_to_flatshaded_mesh(OBJ_Data obj);
-static Color rgba(uint32 i);
+static Color rgba1(uint32 i);
+static Color rgba2(float32 r, float32 g, float32 b, float32 a);
 static Color color_from_vec(vec3 v);
 static vec3 color_to_vec3(Color c);
 static vec4 color_to_vec4(Color c);
 static Color alpha(Color c, uint8 a);
+static GLenum get_opengl_filter(TextureFilter filter);
+static GLenum get_opengl_wrap_mope(TextureWrapMode mode);
+static GLint get_opengl_internal_format(TextureFormat format);
+static void init_render_buffer(uint32 render_buffer, TextureFormat format, uint32 w, uint32 h);
+static Framebuffer create_framebuffer(uint32 w, uint32 h, Array color_attachments, bool has_depth_buffer);
+static void bind1(Framebuffer fr);
+static void bind_default_framebuffer();
+static void blit1(Framebuffer dst, Framebuffer src, ivec2 dst_p1, ivec2 dst_p2, ivec2 src_p1, ivec2 src_p2, GLbitfield mask, TextureFilter filter);
+static void blit2(Framebuffer dst, Framebuffer src, ivec2 p1, ivec2 p2, GLbitfield mask, TextureFilter filter);
+static void blit3(Framebuffer dst, Framebuffer src, GLbitfield mask, TextureFilter filter);
+static void resize(Framebuffer* fr, uint32 w, uint32 h);
+static void delete(Framebuffer fr);
 static Texture2D load_texture2D(char* name);
+static uint32 gen_opengl_texture2D(uint32 width, uint32 height, TextureFilter filter, TextureWrapMode wrap, TextureFormat internal_format);
 static Texture2D create_texture2D(Image image);
-static void bind(Texture2D tex);
-static void set_filter(Texture2D tex, uint32 filter);
-static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex);
+static void bind2(Texture2D tex);
+static void bind3(Texture2D tex, uint32 index);
+static void bind_texture2D(uint32 gl_handle, uint32 index);
+static void set_wrap_mode1(TextureWrapMode mode);
+static void set_wrap_mode2(Texture2D tex, TextureWrapMode mode);
+static void set_filter1(TextureFilter filter);
+static void set_filter2(Texture2D tex, TextureFilter filter);
+static Entity* get_player();
 static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id);
 static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex);
+static void spawn_explosion(uint32 size, vec2 pos, vec2 vel, float32 spread);
 static void draw_particles();
-static bool entity_is_dead(Entity e);
-static Entity* spawn_entity(vec2 pos, Texture2D tex);
 static void kill_entity(Entity* e);
+static bool entity_is_dead(Entity e);
+static Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex);
 static void accelerate(Entity* e, vec2 acc);
 static void thrust(Entity* e, vec2 dir);
 static void turn_to(Entity* e, vec2 target);
@@ -1304,6 +1416,13 @@ static void fire_gun(Entity* e);
 static void update_entity(Entity* e);
 static void update_ai(Entity* e);
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1);
+static void update_entities();
+static void draw_background(vec2 center);
+static ivec2 get_chunk_coord(vec2 pos);
+static Chunk init_chunk();
+static void spawn_chunk(Chunk* chunk, ivec2 coord);
+static void drop_cargo(Entity* en, Cargo* cargo);
+static void draw_inventory();
 
 // Declarations
 static int32 global_seed = 0;
@@ -1314,6 +1433,7 @@ static Texture2D spaceship_from_internet;
 static Texture2D asteroid;
 static Texture2D projectile;
 static Texture2D particle;
+static Transform2D camera = (Transform2D) {0, 0, 0, 10};
 static proc_glActiveShaderProgram glActiveShaderProgram = 0;
 static proc_glActiveTexture glActiveTexture = 0;
 static proc_glAttachShader glAttachShader = 0;
@@ -1852,6 +1972,7 @@ static Shader default3d_shader;
 static Shader default2d_shader;
 static UBO* camera_ubo;
 static UBO* application_ubo;
+static Texture2D white_texture;
 static GLFWwindow* main_window;
 static float32 main_window_width = 1600;
 static float32 main_window_height = 900;
@@ -1859,12 +1980,9 @@ static float32 main_window_aspect;
 static float64 time;
 static float64 deltatime;
 static float64 sim_speed = 1.000000;
+static void (*on_resize_user)(uint32, uint32) = 0;
 static Shader* active_shader;
-static Shader immediate_shader;
-static DrawBuffers immediate_buffer;
-static Texture2D text_atlas;
-static vertex2D* immediate_vertices;
-static uint32* immediate_indices;
+static Trianglebatch immediate_text_batch;
 static float64 mouse_x = 0;
 static float64 mouse_y = 0;
 static float64 pmouse_x = 0;
@@ -1874,19 +1992,19 @@ static float64 dmouse_y = 0;
 static float64 mouse_scroll = 0;
 static vec2 wasd;
 static GizmoPoint* gizmo_points_list;
-static Color gizmo_current_color = (Color){255, 255, 255, 255};
+static Color gizmo_current_color = (Color)(Color) {255, 255, 255, 255};
 static uint32 gizmo_points_vbo;
 static uint32 gizmo_points_vao;
 static Shader gizmo_points_shader;
-static Entity* player;
 static UBO** uniform_buffer_objects;
-static Entity* entity_pool;
+static Entity* global_entity_pool;
 static Bullet* bullets;
 static Particle* particles;
-static BackgroundProp* background_props;
+static Chunk chunk_1;
+static Chunk chunk_2;
+static Chunk chunk_3;
+static Chunk chunk_4;
 static uint32 ships_index = 0;
-static uint32 particles_drawn_prev = 0;
-static uint32 entities_drawn_prev = 0;
 static char* num_str;
 static bool prev_state = 0;
 
@@ -1924,7 +2042,7 @@ static vec2 random_unit_vec21() {
     return (vec2) {cosf(a), sinf(a)};
 }
 static vec2 random_unit_vec22(float32 max_len) {
-    return mul2(random_unit_vec21(), ((max_len * (random(global_seed++) + 1.000000)) / 2.000000));
+    return mul7(random_unit_vec21(), ((max_len * (random(global_seed++) + 1.000000)) / 2.000000));
 }
 static float32 random01() {
     return ((random(global_seed++) + 1.000000) / 2.000000);
@@ -1932,101 +2050,62 @@ static float32 random01() {
 static float32 random_range(int32 seed, float32 min, float32 max) {
     return lerp1(((random(seed) + 1.000000) / 2.000000), min, max);
 }
-void __main() {
-    grax_init();
+static void loadassets() {
     spaceship = load_texture2D("sprite_sheet.bmp");
     spaceship2 = load_texture2D("spaceship2.bmp");
     spaceship_from_internet = load_texture2D("from_internet.bmp");
     asteroid = load_texture2D("asteroid.bmp");
     projectile = load_texture2D("proj.bmp");
     particle = load_texture2D("particle.bmp");
+}
+void __main() {
+    grax_init();
+    loadassets();
     quad_db = create_draw_buffers2();
     {
         float32 p = 0.500000;
-        Array verts = (Array) { .length = 4, .data = (vertex2D[]){{-p, -p, 0, 0, (Color){255, 255, 255, 255}}, {p, -p, 1, 0, (Color){255, 255, 255, 255}}, {p, p, 1, 1, (Color){255, 255, 255, 255}}, {-p, p, 0, 1, (Color){255, 255, 255, 255}}}};
+        Array verts = (Array) { .length = 4, .data = (vertex2D[]){(vertex2D) {-p, -p, 0, 0, (Color)(Color) {255, 255, 255, 255}}, (vertex2D) {p, -p, 1, 0, (Color)(Color) {255, 255, 255, 255}}, (vertex2D) {p, p, 1, 1, (Color)(Color) {255, 255, 255, 255}}, (vertex2D) {-p, p, 0, 1, (Color)(Color) {255, 255, 255, 255}}}};
         Array inds = (Array) { .length = 6, .data = (uint32[]){0, 1, 2, 0, 2, 3}};
-        update_buffers(&quad_db, verts.data, verts.length, inds.data, inds.length);
+        update_buffers1(&quad_db, verts, inds);
     }
-    player = spawn_entity((vec2){0, 0}, spaceship2);
+    Entity* player = spawn_entity(&global_entity_pool, (vec2)(vec2) {0, 0}, spaceship2);
     player->hp = 100;
     player->team_id = 0;
-    Transform2D camera = (Transform2D) {0, 0, 0, 10};
-    for (int32 it = 0; it < 400; it++) {
-        vec2 pos = (vec2) {random(global_seed++), random(global_seed++)};
-        float32 r = random(global_seed++);
-        float32 depth = map(r, -1, 1, 0.300000, 1.000000);
-        spawn_background_prop(mul2(pos, 100), depth, asteroid);
-    }
-    for (int32 it = 0; it < 100; it++) {
-        vec2 pos = (vec2) {random(global_seed++), random(global_seed++)};
-        Entity* e = spawn_entity(mul2(pos, 50), asteroid);
-        e->team_id = 2;
-        e->hp = 20;
-        e->depth = 0.010000;
-    }
-    glClearColor(0, 0, 0, 0);
+    set_clear_color2((Color)(Color) {0, 0, 0, 255});
     while (grax_loop()) {
-        use(&default2d_shader);
-        enable_alpha_blending();
-        enable_depth_test();
-        vec2 mouse_world_pos = get_mouse_world_coord(camera);
-        if (mouse_pressed(1)) {
-            // static decl
-            Array ships = (Array) { .length = 3, .data = (Texture2D[]){spaceship, spaceship2, spaceship_from_internet}};
-            Entity* e = spawn_entity(mouse_world_pos, ((Texture2D*)ships.data)[(ships_index++ % ships.length)]);
-            e->team_id = 1;
-            e->vel = mul2(make_vec1((float32)(mouse_x - pmouse_x), (float32)-(mouse_y - pmouse_y)), 0.010000);
-        }
-        camera.pos = lerp2(0.100000, camera.pos, player->tr.pos);
-        camera.scale = (10 + (length1(player->vel) / 10));
-        apply_camera(camera);
-        {
-            thrust(player, wasd);
-            turn_to(player, mouse_world_pos);
-            if (mouse(0)) fire_gun(player);
-            if (entity_is_dead(*player)) {
-                player->hp = 100;
-                player->tr.pos = (vec2){0, 0};
-            }
-            /* local constant */
-            draw_text1((vec2){-1, (1 - (0.100000 / 2))}, 0.100000, to_string1((uint64)player->hp), (Color){255, 255, 255, 255});
-        }
-        // static decl
-        // static decl
-        uint32 entities_drawn = 0;
-        for (int32 it = 0; it < list_length(background_props); it++) {
-            BackgroundProp* prop = &background_props[it];
-            apply_transform2(prop->tr, prop->depth);
-            apply_color((vec4){1, 1, 1, 1});
-            glBindTexture(3553, prop->tex_handle);
-            draw_elements1(quad_db);
-            entities_drawn++;
-        }
-        for (int32 it = 0; it < 256; it++) {
-            Entity* e = &entity_pool[it];
-            if (entity_is_dead(*e)) continue;
-            update_entity(e);
-            if ((e != player) && (e->tex_handle != asteroid.gl_handle)) update_ai(e);
-            entities_drawn++;
-        }
-        if (entities_drawn != entities_drawn_prev) printf("%u%s", entities_drawn, " entities drawn\n");
-        entities_drawn_prev = entities_drawn;
-        bind(projectile);
-        uint32 bullets_count = list_length(bullets);
-        for (int32 it = 0; it < bullets_count; it++) {
-            Bullet* p = &bullets[it];
-            Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
-            apply_transform1(tr);
-            vec2 particle_scale = (vec2) {0.250000, 1};
-            apply_entity_scale(particle_scale);
-            draw_elements1(quad_db);
-            p->pos = add1(p->pos, mul2(p->vel, (float32)deltatime));
-        }
-        if (bullets_count != particles_drawn_prev) printf("%u%s", bullets_count, " particles drawn\n");
-        particles_drawn_prev = bullets_count;
-        disable_depth_test();
-        draw_particles();
+        drawframe();
     }
+}
+static void drawframe() {
+    use(&default2d_shader);
+    enable_alpha_blending();
+    enable_depth_test();
+    Entity* player = get_player();
+    camera.pos = lerp2(0.100000, camera.pos, player->tr.pos);
+    camera.scale = (10 + (length1(player->vel) / 10));
+    apply_camera(camera);
+    vec2 mouse_world_pos = get_mouse_world_coord(camera);
+    if (mouse_pressed(1)) {
+        // static decl;
+        Array ships = (Array) { .length = 3, .data = (Texture2D[]){spaceship, spaceship2, spaceship_from_internet}};
+        Entity* e = spawn_entity(&global_entity_pool, mouse_world_pos, ((Texture2D*)ships.data)[(ships_index++ % ships.length)]);
+        e->tr.rot = (random(global_seed++) * 3.141593);
+        e->team_id = 1;
+        e->behaviour = update_ai;
+        e->vel = mul7(make_vec1((float32)(mouse_x - pmouse_x), (float32)-(mouse_y - pmouse_y)), 0.010000);
+    }
+    {
+        thrust(player, wasd);
+        turn_to(player, mouse_world_pos);
+        if (mouse(0)) fire_gun(player);
+        if (entity_is_dead(*player)) {
+            player->hp = 100;
+            player->tr.pos = (vec2)(vec2) {0, 0};
+        }
+        /* local constant */;
+        draw_text1((vec2)(vec2) {-1, (1 - (0.100000 / 2))}, 0.100000, to_string1((uint64)player->hp), (Color)(Color) {255, 255, 255, 255});
+    }
+    update_entities();
 }
 static char* fileread1(char* filename) {
     return fileread2(filename, "r");
@@ -2095,9 +2174,12 @@ static void* list_add(void** list, void* data) {
     uint32 stride = list_stride(*list);
     if (cap == len) list_grow(list, (cap * 2));
     void* dst = (((byte*)*list) + (len * stride));
-    memcpy(dst, data, stride);
+    if (data) memcpy(dst, data, stride);
     list_set_length(*list, (len + 1));
     return dst;
+}
+static void* list_append(void** list) {
+    return list_add(list, 0);
 }
 static void* list_get(void* list, uint32 index) {
     return (((byte*)list) + (list_stride(list) * index));
@@ -2109,6 +2191,11 @@ static void list_unordered_remove(void* list, uint32 index) {
     uint32 len = list_length(list);
     memcpy(list_get(list, index), list_get(list, (len - 1)), list_stride(list));
     list_set_length(list, (len - 1));
+}
+static void* list_pop(void* list) {
+    void* res = list_last_item(list);
+    list_head(list)->length--;
+    return res;
 }
 static void load_opengl(void (*(*getProcAddress)(char*))()) {
     glActiveShaderProgram = (proc_glActiveShaderProgram)getProcAddress("glActiveShaderProgram");
@@ -2658,7 +2745,7 @@ static uint64 pow_uint64(uint64 x, uint64 y) {
 static uint64 parse_int1(string str) {
     uint64 res = 0;
     for (int32 i = 0; i < str.length; i++) {
-        uint8 c = ((uint8)str.chars[i] - '0');
+        char c = (str.chars[i] - '0');
         res += (c * pow_uint64(10, (uint64)((str.length - i) - 1)));
     }
     return res;
@@ -2699,15 +2786,15 @@ static float64 parse_float2(char* c_str, uint32* length) {
     return ((int_part + (frac_part / denom)) * sign);
 }
 static string to_string1(uint64 num) {
-    // static decl
-    if (num == 0) return (string){"0", 1};
+    // static decl;
+    if (num == 0) return (string)(string) {"0", 1};
     uint32 i = 20;
     while (num != 0) {
         uint8 r = (uint8)(num % 10);
         num /= 10;
         num_str[--i] = ('0' + (char)r);
     }
-    return (string){&num_str[i], (20 - i)};
+    return (string)(string) {&num_str[i], (20 - i)};
 }
 static bool string_equals(string a, string b) {
     if (a.length != b.length) return 0;
@@ -2744,6 +2831,9 @@ static string trim(string str, uint32 len) {
 }
 static bool is_whitespace(char c) {
     return (((c == ' ') || (c == '\n')) || (c == '\t'));
+}
+static bool is_whitespace_or_null(char c) {
+    return (is_whitespace(c) || (c == 0));
 }
 static bool is_upper_case_letter(char c) {
     return ((c >= 'A') && (c <= 'Z'));
@@ -2789,7 +2879,7 @@ static string tail(string str) {
     return (string) {(str.chars + 1), (str.length - 1)};
 }
 static uint32 lev(string a, string b) {
-    // local procedure
+    /* local procedure */;
     if (a.length == 0) return b.length;
     if (b.length == 0) return a.length;
     if (a.chars[0] == b.chars[0]) return lev(tail(a), tail(b));
@@ -2799,7 +2889,7 @@ static uint32 lev(string a, string b) {
     return (i + 1);
 }
 static string to_string2(StringBuilder sb) {
-    return (string){sb.content, sb.length};
+    return (string)(string) {sb.content, sb.length};
 }
 static StringBuilder sb_create() {
     StringBuilder sb;
@@ -2864,9 +2954,9 @@ static vec2 window_size() {
     int32 w;
     int32 h;
     glfwGetWindowSize(main_window, &w, &h);
-    return (vec2){w, h};
+    return (vec2)(vec2) {w, h};
 }
-static int32 grax_loop() {
+static bool grax_loop() {
     dispatch_immediate();
     glfwSwapBuffers(main_window);
     input_state_reset();
@@ -2899,7 +2989,7 @@ static int32 grax_loop() {
 }
 static void grax_init() {
     if (!glfwInit()) {
-        printf("%s", "ERROR: failed to initilize glfw.\n");
+        printf("%s", "[ERROR]: failed to initilize glfw.\n");
         return;
     }
     glfwWindowHint(139266, 4);
@@ -2909,65 +2999,66 @@ static void grax_init() {
     main_window_aspect = (main_window_height / main_window_width);
     if (!main_window) {
         glfwTerminate();
-        printf("%s", "ERROR: failed to initilize main_window.\n");
+        printf("%s", "[ERROR]: failed to initilize main_window.\n");
         return;
     }
     glfwMakeContextCurrent(main_window);
     glfwSetFramebufferSizeCallback(main_window, on_resize);
     glfwSetScrollCallback(main_window, on_scroll);
     load_opengl(glfwGetProcAddress);
-    printf("%s%s", (char*)glGetString(7938), "\n");
-    glEnable(37600);
-    glEnable(33346);
-    glDebugMessageCallback(opengl_debug_callback, 0);
+    printf("%s%s%s", "[INFO]: OpenGL version: ", (char*)glGetString(7938), "\n");
+    if (1) {
+        glEnable(37600);
+        glEnable(33346);
+        glDebugMessageCallback(opengl_debug_callback, 0);
+        printf("%s", "[INFO]: OpenGL synchronous debug messages enabled.\n");
+    }
     enable_alpha_blending();
     enable_depth_test();
     glEnable(2884);
     glClearColor(0.100000, 0.100000, 0.100000, 1.000000);
     camera_ubo = get_ubo1("Camera");
     application_ubo = get_ubo1("Application");
+    init_immediate_renderer();
     {
-        immediate_vertices = list_create(sizeof(vertex2D));
-        immediate_indices = list_create(sizeof(uint32));
-        immediate_buffer = create_draw_buffers2();
-    }
-    {
-        immediate_shader = load_shader1("../grax/shaders/ui.glsl");
         default3d_shader = load_shader1("../grax/shaders/default3d.glsl");
         default2d_shader = load_shader1("../grax/shaders/default2d.glsl");
     }
-    Image image = load_bitmap("../grax/CascadiaMono.bmp");
-    text_atlas = create_texture2D(image);
-    free(image.pixels);
+    {
+        Color pixel = (Color) {255, 255, 255, 255};
+        Image image = (Image) {.width = 1, .height = 1, .pixels = &pixel};
+        white_texture = create_texture2D(image);
+    }
 }
 static void on_resize(GLFWwindow* window, int32 w, int32 h) {
     if ((w == 0) || (h == 0)) return;
     main_window_width = (float32)w;
     main_window_height = (float32)h;
     main_window_aspect = (main_window_height / main_window_width);
-    printf("%s%f%s%f%s%f%s", "[INFO]: Main Window Resize:\n    width = ", main_window_width, "\n    height = ", main_window_height, "\n    aspect = ", main_window_aspect, "\n");
+    printf("%s%d%s%d%s", "[INFO]: Window resize: ", w, "x", h, "\n");
     glViewport(0, 0, w, h);
+    if (on_resize_user) on_resize_user((uint32)w, (uint32)h);
 }
 static void opengl_debug_callback(GLenum source, GLenum _type, GLuint id, GLenum severity, GLsizei length, GLchar* message, void* userParam) {
     switch (_type) {
-        case 33356:
+        case 33356:;
         printf("%s", "ERROR: ");
         break;
-        case 33357:
+        case 33357:;
         printf("%s", "DEPRECATED BEHAVIOR: ");
         break;
-        case 33358:
+        case 33358:;
         printf("%s", "UDEFINED BEHAVIOR: ");
         break;
-        case 33359:
+        case 33359:;
         printf("%s", "PORTABILITY: ");
         break;
-        case 33360:
+        case 33360:;
         printf("%s", "PERFORMANCE: ");
         break;
-        case 33361:
+        case 33361:;
         return;
-        case 33384:
+        case 33384:;
         printf("%s", "MARKER: ");
         break;
     }
@@ -3011,19 +3102,51 @@ static void toggle_fullscreen(GLFWwindow* window) {
         glfwSetWindowMonitor(window, m, 0, 0, mode->width, mode->height, mode->refreshRate);
     }
 }
-static void disable_blending() {
-    glDisable(3042);
-}
 static void enable_alpha_blending() {
     glEnable(3042);
     glBlendEquation(32774);
     glBlendFunc(770, 771);
+}
+static void enable_additive_blending() {
+    glEnable(3042);
+    glBlendEquation(32774);
+    glBlendFunc(1, 1);
+}
+static void disable_blending() {
+    glDisable(3042);
 }
 static void enable_depth_test() {
     glEnable(2929);
 }
 static void disable_depth_test() {
     glDisable(2929);
+}
+static void set_clear_color1(float32 r, float32 g, float32 b, float32 a) {
+    glClearColor(r, g, b, a);
+}
+static void set_clear_color2(Color color) {
+    glClearColor((color.r / 255.000000), (color.g / 255.000000), (color.b / 255.000000), (color.a / 255.000000));
+}
+static void set_clear_depth(float64 depth) {
+    glClearDepth(depth);
+}
+static void clear_color1() {
+    glClear(16384);
+}
+static void clear_color2(float32 r, float32 g, float32 b, float32 a) {
+    set_clear_color1(r, g, b, a);
+    clear_color1();
+}
+static void clear_color3(Color color) {
+    set_clear_color2(color);
+    clear_color1();
+}
+static void clear_depth1() {
+    glClear(256);
+}
+static void clear_depth2(float64 depth) {
+    set_clear_depth(depth);
+    glClear(256);
 }
 static void use(Shader* s) {
     active_shader = s;
@@ -3094,11 +3217,11 @@ static Shader load_shader1(char* filename) {
     process_glsl_source(&src, filename);
     StringBuilder frag = sb_create();
     StringBuilder vert = sb_create();
-    sb_append2(&frag, "#version 330 core\n");
+    sb_append2(&frag, "#version 420 core\n");
     sb_append2(&frag, "#define IO in\n");
     sb_append2(&frag, "#define FragmentShader\n");
     sb_append2(&frag, src.content);
-    sb_append2(&vert, "#version 330 core\n");
+    sb_append2(&vert, "#version 420 core\n");
     sb_append2(&vert, "#define IO out\n");
     sb_append2(&vert, "#define VertexShader\n");
     sb_append2(&vert, src.content);
@@ -3127,8 +3250,8 @@ static void cleanup_shader(uint32 program, uint32 shader) {
     glDeleteShader(shader);
 }
 static Shader create_shader(char* fragsrc, char* vertsrc) {
-    // local procedure
-    // local procedure
+    /* local procedure */;
+    /* local procedure */;
     uint32 program = glCreateProgram();
     uint32 f = make_shader(program, 35632, fragsrc);
     uint32 v = make_shader(program, 35633, vertsrc);
@@ -3144,44 +3267,53 @@ static Shader create_shader(char* fragsrc, char* vertsrc) {
         printf("%s", buffer);
         free(buffer);
     }
-    Shader s;
+    Shader s = (Shader) {0};
     s.gl_handle = program;
     bind_ubos(&s);
     return s;
 }
+static void init_immediate_renderer() {
+    immediate_text_batch.vertices = list_create(sizeof(vertex2D));
+    immediate_text_batch.indices = list_create(sizeof(uint32));
+    immediate_text_batch.draw_buffers = create_draw_buffers2();
+    immediate_text_batch.shader = load_shader1("../grax/shaders/ui.glsl");
+    Image image = load_bitmap("../grax/CascadiaMono.bmp");
+    immediate_text_batch.texture = create_texture2D(image);
+    free(image.pixels);
+}
 static void dispatch_immediate() {
-    uint32 vert_count = list_length(immediate_vertices);
-    uint32 ind_count = list_length(immediate_indices);
+    uint32 vert_count = list_length(immediate_text_batch.vertices);
+    uint32 ind_count = list_length(immediate_text_batch.indices);
     if (vert_count != 0) {
-        update_buffers(&immediate_buffer, immediate_vertices, vert_count, immediate_indices, ind_count);
-        bind(text_atlas);
-        use(&immediate_shader);
+        update_buffers2(&immediate_text_batch.draw_buffers, immediate_text_batch.vertices, vert_count, immediate_text_batch.indices, ind_count);
+        use(&immediate_text_batch.shader);
+        bind2(immediate_text_batch.texture);
         enable_alpha_blending();
         disable_depth_test();
-        draw_elements1(immediate_buffer);
+        draw_elements1(immediate_text_batch.draw_buffers);
         enable_depth_test();
     }
-    list_clear(immediate_vertices);
-    list_clear(immediate_indices);
+    list_clear(immediate_text_batch.vertices);
+    list_clear(immediate_text_batch.indices);
 }
 static void immediate_vertex1(float32 x, float32 y, float32 u, float32 v) {
-    immediate_vertex2(x, y, u, v, (Color){255, 255, 255, 255});
+    immediate_vertex2(x, y, u, v, (Color)(Color) {255, 255, 255, 255});
 }
 static void immediate_vertex2(float32 x, float32 y, float32 u, float32 v, Color color) {
     vertex2D vert;
     vert.pos = (vec2) {x, y};
     vert.uv = (vec2) {u, v};
     vert.color = color;
-    list_add(&immediate_vertices, &vert);
+    list_add(&immediate_text_batch.vertices, &vert);
 }
 static void immediate_triangle(uint32 i1, uint32 i2, uint32 i3) {
-    uint32 base = list_length(immediate_vertices);
+    uint32 base = list_length(immediate_text_batch.vertices);
     i1 += base;
     i2 += base;
     i3 += base;
-    list_add(&immediate_indices, &i1);
-    list_add(&immediate_indices, &i2);
-    list_add(&immediate_indices, &i3);
+    list_add(&immediate_text_batch.indices, &i1);
+    list_add(&immediate_text_batch.indices, &i2);
+    list_add(&immediate_text_batch.indices, &i3);
 }
 static void draw_rect(vec2 pos, vec2 size) {
     float32 sx = (size.x * 0.500000);
@@ -3196,8 +3328,8 @@ static void draw_rect(vec2 pos, vec2 size) {
 static void draw_image(Texture2D* image) {
 }
 static void draw_char(vec2 pos, float32 size, char c, Color color) {
-    /* local constant */
-    /* local constant */
+    /* local constant */;
+    /* local constant */;
     uint32 b = ((uint8)c - ' ');
     float32 col = (b % 14);
     float32 row = ((b / 14) + 1);
@@ -3240,13 +3372,13 @@ static vec2 draw_text2(vec2 pos, float32 size, char* text, Color color) {
     float32 start = pos.x;
     while (*text) {
         switch (*text) {
-            case '\n':
+            case '\n':;
             pos.x = start;
             pos.y -= size;
             break;
-            default:
+            default:;
             draw_char(pos, size, *text, color);
-            case ' ':
+            case ' ':;
             pos.x += (size * 0.500000);
             break;
         }
@@ -3307,11 +3439,14 @@ static float32 lerp1(float32 t, float32 a, float32 b) {
 static float32 map(float32 t, float32 a, float32 b, float32 c, float32 d) {
     return lerp1(((t - a) / (b - a)), c, d);
 }
-static int32 round2int(float32 x) {
-    return (int32)(x + 0.500000);
-}
 static float32 fract(float32 x) {
     return (x - floorf(x));
+}
+static float32 round1(float32 x) {
+    return floorf((x + 0.500000));
+}
+static float32 round2multiple1(float32 x, float32 n) {
+    return (floorf(((x / n) + 0.500000)) * n);
 }
 static float32 abs1(float32 x) {
     return (x < 0) ? -x : x;
@@ -3319,10 +3454,10 @@ static float32 abs1(float32 x) {
 static float64 abs2(float64 x) {
     return (x < 0) ? -x : x;
 }
-static int32 is_nan1(float32 x) {
+static bool is_nan1(float32 x) {
     return (x != x);
 }
-static int32 is_nan2(vec2 v) {
+static bool is_nan2(vec2 v) {
     return (is_nan1(v.x) || is_nan1(v.y));
 }
 static vec2 make_vec1(float32 x, float32 y) {
@@ -3346,50 +3481,140 @@ static vec4 make_vec6(vec3 xyz, float32 w) {
 static vec4 make_vec7(float32 x, vec3 yzw) {
     return (vec4) {x, yzw.x, yzw.y, yzw.z};
 }
+static vec2 make_vec8(ivec2 v) {
+    return (vec2) {(float32)v.x, (float32)v.y};
+}
+static vec3 make_vec9(ivec3 v) {
+    return (vec3) {(float32)v.x, (float32)v.y, (float32)v.z};
+}
+static vec4 make_vec10(ivec4 v) {
+    return (vec4) {(float32)v.x, (float32)v.y, (float32)v.z, (float32)v.w};
+}
+static ivec2 make_ivec1(vec2 v) {
+    return (ivec2) {(int32)v.x, (int32)v.y};
+}
+static ivec3 make_ivec2(vec3 v) {
+    return (ivec3) {(int32)v.x, (int32)v.y, (int32)v.z};
+}
+static ivec4 make_ivec3(vec4 v) {
+    return (ivec4) {(int32)v.x, (int32)v.y, (int32)v.z, (int32)v.w};
+}
+static bool equals1(ivec2 a, ivec2 b) {
+    return ((a.x == b.x) && (a.y == b.y));
+}
+static bool equals2(ivec3 a, ivec3 b) {
+    return (((a.x == b.x) && (a.y == b.y)) && (a.z == b.z));
+}
+static bool equals3(ivec4 a, ivec4 b) {
+    return ((((a.x == b.x) && (a.y == b.y)) && (a.z == b.z)) && (a.w == b.w));
+}
+static vec2 round2(vec2 v) {
+    return (vec2) {round1(v.x), round1(v.y)};
+}
+static vec3 round3(vec3 v) {
+    return (vec3) {round1(v.x), round1(v.y), round1(v.z)};
+}
+static vec4 round4(vec4 v) {
+    return (vec4) {round1(v.x), round1(v.y), round1(v.z), round1(v.w)};
+}
+static vec2 round2multiple2(vec2 v, float32 n) {
+    return (vec2) {round2multiple1(v.x, n), round2multiple1(v.y, n)};
+}
+static vec3 round2multiple3(vec3 v, float32 n) {
+    return (vec3) {round2multiple1(v.x, n), round2multiple1(v.y, n), round2multiple1(v.z, n)};
+}
+static vec4 round2multiple4(vec4 v, float32 n) {
+    return (vec4) {round2multiple1(v.x, n), round2multiple1(v.y, n), round2multiple1(v.z, n), round2multiple1(v.w, n)};
+}
 static vec2 sub1(vec2 a, vec2 b) {
-    return make_vec1((a.x - b.x), (a.y - b.y));
-}
-static vec2 add1(vec2 a, vec2 b) {
-    return make_vec1((a.x + b.x), (a.y + b.y));
-}
-static vec2 mul1(vec2 a, vec2 b) {
-    return make_vec1((a.x * b.x), (a.y * b.y));
-}
-static vec2 mul2(vec2 a, float32 s) {
-    return make_vec1((a.x * s), (a.y * s));
-}
-static vec2 neg1(vec2 a) {
-    return make_vec1(-a.x, -a.y);
+    return (vec2) {(a.x - b.x), (a.y - b.y)};
 }
 static vec3 sub2(vec3 a, vec3 b) {
-    return make_vec2((a.x - b.x), (a.y - b.y), (a.z - b.z));
-}
-static vec3 add2(vec3 a, vec3 b) {
-    return make_vec2((a.x + b.x), (a.y + b.y), (a.z + b.z));
-}
-static vec3 mul3(vec3 a, vec3 b) {
-    return make_vec2((a.x * b.x), (a.y * b.y), (a.z * b.z));
-}
-static vec3 mul4(vec3 a, float32 s) {
-    return make_vec2((a.x * s), (a.y * s), (a.z * s));
-}
-static vec3 neg2(vec3 a) {
-    return make_vec2(-a.x, -a.y, -a.z);
+    return (vec3) {(a.x - b.x), (a.y - b.y), (a.z - b.z)};
 }
 static vec4 sub3(vec4 a, vec4 b) {
-    return make_vec3((a.x - b.x), (a.y - b.y), (a.z - b.z), (a.w - b.w));
+    return (vec4) {(a.x - b.x), (a.y - b.y), (a.z - b.z), (a.w - b.w)};
+}
+static ivec2 sub4(ivec2 a, ivec2 b) {
+    return (ivec2) {(a.x - b.x), (a.y - b.y)};
+}
+static ivec3 sub5(ivec3 a, ivec3 b) {
+    return (ivec3) {(a.x - b.x), (a.y - b.y), (a.z - b.z)};
+}
+static ivec4 sub6(ivec4 a, ivec4 b) {
+    return (ivec4) {(a.x - b.x), (a.y - b.y), (a.z - b.z), (a.w - b.w)};
+}
+static vec2 add1(vec2 a, vec2 b) {
+    return (vec2) {(a.x + b.x), (a.y + b.y)};
+}
+static vec3 add2(vec3 a, vec3 b) {
+    return (vec3) {(a.x + b.x), (a.y + b.y), (a.z + b.z)};
 }
 static vec4 add3(vec4 a, vec4 b) {
-    return make_vec3((a.x + b.x), (a.y + b.y), (a.z + b.z), (a.w + b.w));
+    return (vec4) {(a.x + b.x), (a.y + b.y), (a.z + b.z), (a.w + b.w)};
 }
-static vec4 mul5(vec4 a, vec4 b) {
-    return make_vec3((a.x * b.x), (a.y * b.y), (a.z * b.z), (a.w * b.w));
+static ivec2 add4(ivec2 a, ivec2 b) {
+    return (ivec2) {(a.x + b.x), (a.y + b.y)};
 }
-static vec4 mul6(vec4 a, float32 s) {
-    return make_vec3((a.x * s), (a.y * s), (a.z * s), (a.w * s));
+static ivec3 add5(ivec3 a, ivec3 b) {
+    return (ivec3) {(a.x + b.x), (a.y + b.y), (a.z + b.z)};
+}
+static ivec4 add6(ivec4 a, ivec4 b) {
+    return (ivec4) {(a.x + b.x), (a.y + b.y), (a.z + b.z), (a.w + b.w)};
+}
+static vec2 mul1(vec2 a, vec2 b) {
+    return (vec2) {(a.x * b.x), (a.y * b.y)};
+}
+static vec3 mul2(vec3 a, vec3 b) {
+    return (vec3) {(a.x * b.x), (a.y * b.y), (a.z * b.z)};
+}
+static vec4 mul3(vec4 a, vec4 b) {
+    return (vec4) {(a.x * b.x), (a.y * b.y), (a.z * b.z), (a.w * b.w)};
+}
+static ivec2 mul4(ivec2 a, ivec2 b) {
+    return (ivec2) {(a.x * b.x), (a.y * b.y)};
+}
+static ivec3 mul5(ivec3 a, ivec3 b) {
+    return (ivec3) {(a.x * b.x), (a.y * b.y), (a.z * b.z)};
+}
+static ivec4 mul6(ivec4 a, ivec4 b) {
+    return (ivec4) {(a.x * b.x), (a.y * b.y), (a.z * b.z), (a.w * b.w)};
+}
+static vec2 mul7(vec2 a, float32 s) {
+    return (vec2) {(a.x * s), (a.y * s)};
+}
+static vec3 mul8(vec3 a, float32 s) {
+    return (vec3) {(a.x * s), (a.y * s), (a.z * s)};
+}
+static vec4 mul9(vec4 a, float32 s) {
+    return (vec4) {(a.x * s), (a.y * s), (a.z * s), (a.w * s)};
+}
+static ivec2 mul10(ivec2 a, int32 s) {
+    return (ivec2) {(a.x * s), (a.y * s)};
+}
+static ivec3 mul11(ivec3 a, int32 s) {
+    return (ivec3) {(a.x * s), (a.y * s), (a.z * s)};
+}
+static ivec4 mul12(ivec4 a, int32 s) {
+    return (ivec4) {(a.x * s), (a.y * s), (a.z * s), (a.w * s)};
+}
+static vec2 neg1(vec2 a) {
+    return (vec2) {-a.x, -a.y};
+}
+static vec3 neg2(vec3 a) {
+    return (vec3) {-a.x, -a.y, -a.z};
 }
 static vec4 neg3(vec4 a) {
-    return make_vec3(-a.x, -a.y, -a.z, -a.w);
+    return (vec4) {-a.x, -a.y, -a.z, -a.w};
+}
+static ivec2 neg4(ivec2 a) {
+    return (ivec2) {-a.x, -a.y};
+}
+static ivec3 neg5(ivec3 a) {
+    return (ivec3) {-a.x, -a.y, -a.z};
+}
+static ivec4 neg6(ivec4 a) {
+    return (ivec4) {-a.x, -a.y, -a.z, -a.w};
 }
 static float32 angle1(vec2 a, vec2 b) {
     return acosf((dot1(a, b) / (length1(a) * length1(b))));
@@ -3403,59 +3628,56 @@ static float32 angle3(vec4 a, vec4 b) {
 static float32 dot1(vec2 a, vec2 b) {
     return ((a.x * b.x) + (a.y * b.y));
 }
-static float32 sqlength1(vec2 a) {
-    return dot1(a, a);
-}
-static float32 length1(vec2 a) {
-    return sqrtf(dot1(a, a));
-}
-static vec2 normalize1(vec2 a) {
-    return mul2(a, (1.000000 / length1(a)));
-}
-static vec2 reflect1(vec2 a, vec2 normal) {
-    return add1(a, mul2(normal, (dot1(a, normal) * -2.000000)));
-}
-static vec2 lerp2(float32 t, vec2 a, vec2 b) {
-    return add1(a, mul2(sub1(b, a), t));
-}
 static float32 dot2(vec3 a, vec3 b) {
     return (((a.x * b.x) + (a.y * b.y)) + (a.z * b.z));
-}
-static float32 sqlength2(vec3 a) {
-    return dot2(a, a);
-}
-static float32 length2(vec3 a) {
-    return sqrtf(dot2(a, a));
-}
-static vec3 normalize2(vec3 a) {
-    return mul4(a, (1.000000 / length2(a)));
-}
-static vec3 reflect2(vec3 a, vec3 normal) {
-    return add2(a, mul4(normal, (dot2(a, normal) * -2.000000)));
-}
-static vec3 lerp3(float32 t, vec3 a, vec3 b) {
-    return add2(a, mul4(sub2(b, a), t));
-}
-static vec3 cross(vec3 a, vec3 b) {
-    return (vec3) {((a.y * b.z) - (a.z * b.y)), ((a.z * b.x) - (a.x * b.z)), ((a.x * b.y) - (a.y * b.x))};
 }
 static float32 dot3(vec4 a, vec4 b) {
     return ((((a.x * b.x) + (a.y * b.y)) + (a.z * b.z)) + (a.w * b.w));
 }
+static vec2 reflect1(vec2 a, vec2 normal) {
+    return add1(a, mul7(normal, (dot1(a, normal) * -2.000000)));
+}
+static vec3 reflect2(vec3 a, vec3 normal) {
+    return add2(a, mul8(normal, (dot2(a, normal) * -2.000000)));
+}
+static vec4 reflect3(vec4 a, vec4 normal) {
+    return add3(a, mul9(normal, (dot3(a, normal) * -2.000000)));
+}
+static vec2 normalize1(vec2 a) {
+    return mul7(a, (1.000000 / length1(a)));
+}
+static vec3 normalize2(vec3 a) {
+    return mul8(a, (1.000000 / length2(a)));
+}
+static vec4 normalize3(vec4 a) {
+    return mul9(a, (1.000000 / length3(a)));
+}
+static vec2 lerp2(float32 t, vec2 a, vec2 b) {
+    return add1(a, mul7(sub1(b, a), t));
+}
+static vec3 lerp3(float32 t, vec3 a, vec3 b) {
+    return add2(a, mul8(sub2(b, a), t));
+}
+static vec4 lerp4(float32 t, vec4 a, vec4 b) {
+    return add3(a, mul9(sub3(b, a), t));
+}
+static float32 sqlength1(vec2 a) {
+    return dot1(a, a);
+}
+static float32 sqlength2(vec3 a) {
+    return dot2(a, a);
+}
 static float32 sqlength3(vec4 a) {
     return dot3(a, a);
 }
+static float32 length1(vec2 a) {
+    return sqrtf(dot1(a, a));
+}
+static float32 length2(vec3 a) {
+    return sqrtf(dot2(a, a));
+}
 static float32 length3(vec4 a) {
     return sqrtf(dot3(a, a));
-}
-static vec4 normalize3(vec4 a) {
-    return mul6(a, (1.000000 / length3(a)));
-}
-static vec4 reflect3(vec4 a, vec4 normal) {
-    return add3(a, mul6(normal, (dot3(a, normal) * -2.000000)));
-}
-static vec4 lerp4(float32 t, vec4 a, vec4 b) {
-    return add3(a, mul6(sub3(b, a), t));
 }
 static vec2 xy1(vec3 a) {
     return (vec2) {a.x, a.y};
@@ -3465,6 +3687,9 @@ static vec2 xy2(vec4 a) {
 }
 static vec3 xyz(vec4 a) {
     return (vec3) {a.x, a.y, a.z};
+}
+static vec3 cross(vec3 a, vec3 b) {
+    return (vec3) {((a.y * b.z) - (a.z * b.y)), ((a.z * b.x) - (a.x * b.z)), ((a.x * b.y) - (a.y * b.x))};
 }
 static mat2 mat2_identity() {
     return (mat2) {1, 0, 0, 1};
@@ -3481,7 +3706,7 @@ static mat2 transpose1(mat2 m) {
 static float32 det(mat2 m) {
     return ((m.row1.x * m.row2.y) - (m.row1.y * m.row2.x));
 }
-static mat2 mul7(mat2 a, mat2 b) {
+static mat2 mul13(mat2 a, mat2 b) {
     mat2 res;
     res.row1.x = dot1(a.row1, col11(b));
     res.row1.y = dot1(a.row1, col21(b));
@@ -3489,10 +3714,10 @@ static mat2 mul7(mat2 a, mat2 b) {
     res.row2.y = dot1(a.row2, col21(b));
     return res;
 }
-static vec2 mul8(mat2 m, vec2 v) {
+static vec2 mul14(mat2 m, vec2 v) {
     return (vec2) {dot1(m.row1, v), dot1(m.row2, v)};
 }
-static vec2 mul9(vec2 v, mat2 m) {
+static vec2 mul15(vec2 v, mat2 m) {
     return (vec2) {dot1(v, col11(m)), dot1(v, col21(m))};
 }
 static mat3 mat3_identity() {
@@ -3510,7 +3735,7 @@ static vec3 col31(mat3 m) {
 static mat3 transpose2(mat3 m) {
     return (mat3) {col12(m), col22(m), col31(m)};
 }
-static mat3 mul10(mat3 a, mat3 b) {
+static mat3 mul16(mat3 a, mat3 b) {
     mat3 res;
     res.row1.x = dot2(a.row1, col12(b));
     res.row1.y = dot2(a.row1, col22(b));
@@ -3523,10 +3748,10 @@ static mat3 mul10(mat3 a, mat3 b) {
     res.row3.z = dot2(a.row3, col31(b));
     return res;
 }
-static vec3 mul11(mat3 m, vec3 v) {
+static vec3 mul17(mat3 m, vec3 v) {
     return (vec3) {dot2(m.row1, v), dot2(m.row2, v), dot2(m.row3, v)};
 }
-static vec3 mul12(vec3 v, mat3 m) {
+static vec3 mul18(vec3 v, mat3 m) {
     return (vec3) {dot2(v, col12(m)), dot2(v, col22(m)), dot2(v, col31(m))};
 }
 static mat4 mat4_identity() {
@@ -3547,7 +3772,7 @@ static vec4 col4(mat4 m) {
 static mat4 transpose3(mat4 m) {
     return (mat4) {col13(m), col23(m), col32(m), col4(m)};
 }
-static mat4 mul13(mat4 a, mat4 b) {
+static mat4 mul19(mat4 a, mat4 b) {
     mat4 res;
     res.row1.x = dot3(a.row1, col13(b));
     res.row1.y = dot3(a.row1, col23(b));
@@ -3567,10 +3792,10 @@ static mat4 mul13(mat4 a, mat4 b) {
     res.row4.w = dot3(a.row4, col4(b));
     return res;
 }
-static vec4 mul14(mat4 m, vec4 v) {
+static vec4 mul20(mat4 m, vec4 v) {
     return (vec4) {dot3(m.row1, v), dot3(m.row2, v), dot3(m.row3, v), dot3(m.row4, v)};
 }
-static vec4 mul15(vec4 v, mat4 m) {
+static vec4 mul21(vec4 v, mat4 m) {
     return (vec4) {dot3(v, col13(m)), dot3(v, col23(m)), dot3(v, col32(m)), dot3(v, col4(m))};
 }
 static mat4 perspective(float32 fovy, float32 aspect, float32 near_depth, float32 far_depth) {
@@ -3596,22 +3821,22 @@ static quat normalize4(quat q) {
     float32 l = sqrtf(((((q.x * q.x) + (q.y * q.y)) + (q.z * q.z)) + (q.w * q.w)));
     return (quat) {(q.x / l), (q.y / l), (q.z / l), (q.w / l)};
 }
-static quat sub4(quat a, quat b) {
-    return (quat) {(a.x - b.x), (a.y - b.y), (a.z - b.z), (a.w - b.w)};
-}
-static quat add4(quat a, quat b) {
-    return (quat) {(a.x + b.x), (a.y + b.y), (a.z + b.z), (a.w + b.w)};
-}
-static quat mul16(quat a, float32 s) {
-    return (quat) {(a.x * s), (a.y * s), (a.z * s), (a.w * s)};
-}
 static quat lerp5(float32 t, quat a, quat b) {
-    return add4(a, mul16(sub4(b, a), t));
+    return add7(a, mul22(sub7(b, a), t));
 }
 static quat nlerp(float32 t, quat a, quat b) {
     return normalize4(lerp5(t, a, b));
 }
-static quat mul17(quat l, quat r) {
+static quat sub7(quat a, quat b) {
+    return (quat) {(a.x - b.x), (a.y - b.y), (a.z - b.z), (a.w - b.w)};
+}
+static quat add7(quat a, quat b) {
+    return (quat) {(a.x + b.x), (a.y + b.y), (a.z + b.z), (a.w + b.w)};
+}
+static quat mul22(quat a, float32 s) {
+    return (quat) {(a.x * s), (a.y * s), (a.z * s), (a.w * s)};
+}
+static quat mul23(quat l, quat r) {
     float32 a = l.w;
     float32 b = l.x;
     float32 c = l.y;
@@ -3655,16 +3880,19 @@ static Transform transform_default() {
     return (Transform) {.position = {0, 0, 0}, .scale = {1, 1, 1}, .rotation = {0, 0, 0, 1}};
 }
 static void rotate1(Transform* tr, quat q) {
-    tr->rotation = mul17(tr->rotation, q);
+    tr->rotation = mul23(tr->rotation, q);
     tr->rotation = normalize4(tr->rotation);
 }
 static void rotate2(Transform* tr, vec3 axis, float32 angle) {
     rotate1(tr, axisangle2quat(axis, angle));
 }
-static void translate(Transform* tr, vec3 t) {
-    tr->position.x += t.x;
-    tr->position.y += t.y;
-    tr->position.z += t.z;
+static void translate1(Transform* tr, vec3 t) {
+    translate2(tr, t.x, t.y, t.z);
+}
+static void translate2(Transform* tr, float32 x, float32 y, float32 z) {
+    tr->position.x += x;
+    tr->position.y += y;
+    tr->position.z += z;
 }
 static void look_at1(Transform* tr, vec3 target, vec3 up) {
     vec3 forward = normalize2(sub2(target, tr->position));
@@ -3709,7 +3937,7 @@ static vec2 world2local2(Transform2D t, float32 x, float32 y) {
     return res;
 }
 static float32 vec2_to_angle(vec2 v) {
-    float32 a = angle1((vec2){0, 1}, v);
+    float32 a = angle1((vec2)(vec2) {0, 1}, v);
     if (v.x < 0) a *= -1;
     return a;
 }
@@ -3725,7 +3953,7 @@ static vec2 rotate_vec(vec2 dir, float32 angle) {
     res.y = ((-s * dir.x) + (c * dir.y));
     return res;
 }
-static Camera camera(float32 fov, float32 near, float32 far) {
+static Camera make_camera(float32 fov, float32 near, float32 far) {
     Camera cam = (Camera) {0};
     cam.transform = transform_default();
     cam.fov = fov;
@@ -3749,10 +3977,26 @@ static void camera_fly_control(Camera* cam) {
     vec3 forward = xyz(m.row3);
     if (mouse(1)) {
         rotate2(&cam->transform, left, (float32)(-dmouse_y / 100.000000));
-        rotate2(&cam->transform, (vec3){0, 1, 0}, (float32)(dmouse_x / 100.000000));
+        rotate2(&cam->transform, (vec3)(vec3) {0, 1, 0}, (float32)(dmouse_x / 100.000000));
     }
-    cam->transform.position = add2(cam->transform.position, mul4(forward, (wasd.y / 10.000000)));
-    cam->transform.position = add2(cam->transform.position, mul4(left, (-wasd.x / 10.000000)));
+    float32 speed = 0.100000;
+    if (key2(340)) {
+        speed = 1.000000;
+    }
+    translate1(&cam->transform, mul8(forward, (wasd.y * speed)));
+    translate1(&cam->transform, mul8(left, (-wasd.x * speed)));
+}
+static vec2 screen2ndc(float32 x, float32 y) {
+    return (vec2) {(((x / (main_window_width - 1)) - 0.500000) * 2.000000), (-((y / (main_window_height - 1)) - 0.500000) * 2.000000)};
+}
+static vec3 camera_ray(Camera cam, vec2 ndc) {
+    float32 h = (cam.near_plane / tanf(((3.141593 - cam.fov) / 2.000000)));
+    float32 w = (h / main_window_aspect);
+    vec3 ray = (vec3) {0};
+    ray = add2(ray, mul8(xyz(col13(cam.view)), (ndc.x * w)));
+    ray = add2(ray, mul8(xyz(col23(cam.view)), (ndc.y * h)));
+    ray = add2(ray, mul8(xyz(col32(cam.view)), -cam.near_plane));
+    return normalize2(ray);
 }
 static Image load_bitmap(char* filename) {
     typedef struct Header Header;
@@ -3787,13 +4031,13 @@ static Image load_bitmap(char* filename) {
     image.height = (uint32)info->height;
     image.pixels = malloc(((image.width * image.height) * sizeof(Color)));
     switch (info->bits_per_pixel) {
-        case 1:
+        case 1:;
         printf("%s%s%s", "[ERROR]: .bmp file \"", filename, "\" with 1 bits per pixel not implemented yet.\n");
         break;
-        case 4:
+        case 4:;
         printf("%s%s%s", "[ERROR]: .bmp file \"", filename, "\" with 4 bits per pixel not implemented yet.\n");
         break;
-        case 8:
+        case 8:;
         {
             uint8* bytes = data;
             for (int32 i = 0; i < (info->width * info->height); i++) {
@@ -3801,10 +4045,10 @@ static Image load_bitmap(char* filename) {
             }
         }
         break;
-        case 16:
+        case 16:;
         printf("%s%s%s", "[ERROR]: .bmp file \"", filename, "\" with 16 bits per pixel not implemented yet.\n");
         break;
-        case 24:
+        case 24:;
         {
             ColorRgb* colors = data;
             for (int32 i = 0; i < (info->width * info->height); i++) {
@@ -3815,7 +4059,7 @@ static Image load_bitmap(char* filename) {
             }
         }
         break;
-        case 32:
+        case 32:;
         {
             Color* colors = data;
             for (int32 i = 0; i < (info->width * info->height); i++) {
@@ -3826,7 +4070,7 @@ static Image load_bitmap(char* filename) {
             }
         }
         break;
-        default:
+        default:;
         break;
     }
     free(file_contents);
@@ -3842,7 +4086,7 @@ static bool mouse(int32 btn) {
     return (bool)glfwGetMouseButton(main_window, btn);
 }
 static bool mouse_pressed(int32 btn) {
-    // static decl
+    // static decl;
     bool state = mouse(btn);
     bool res = (!prev_state && state);
     prev_state = state;
@@ -3873,24 +4117,38 @@ static void enable_cursor() {
 static void disable_cursor() {
     glfwSetInputMode(main_window, 208897, 212995);
 }
+static VertexAttributeInfo get_vertex_attribute_info(VertexAttributeType datatype) {
+    switch (datatype) {
+        case 0:;
+        return (VertexAttributeInfo) {._type = 5126, .count = 2, .bytesize = 8, .normalized = 0};
+        case 1:;
+        return (VertexAttributeInfo) {._type = 5126, .count = 3, .bytesize = 12, .normalized = 0};
+        case 2:;
+        return (VertexAttributeInfo) {._type = 5126, .count = 4, .bytesize = 16, .normalized = 0};
+        case 3:;
+        return (VertexAttributeInfo) {._type = 5121, .count = 4, .bytesize = 4, .normalized = 1};
+    }
+    return (VertexAttributeInfo) {0};
+}
+static uint32 set_vertex_attribute_pointer(uint32 index, VertexAttributeType datatype, int32 stride, uint32 offset) {
+    VertexAttributeInfo info = get_vertex_attribute_info(datatype);
+    glEnableVertexAttribArray(index);
+    glVertexAttribPointer(index, info.count, info._type, info.normalized, stride, offset);
+    return info.bytesize;
+}
+static void init_vertex_layout(int32 stride, Array attribs) {
+    uint32 offset = 0;
+    for (uint32 index = 0; index < attribs.length; index++) {
+        offset += set_vertex_attribute_pointer(index, ((VertexAttributeType*)attribs.data)[index], stride, offset);
+    }
+}
 static void setup_vertex2D_attributes() {
-    vertex2D* v = 0;
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 2, 5126, 0, sizeof(vertex2D), &v->pos);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 2, 5126, 0, sizeof(vertex2D), &v->uv);
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 4, 5121, 1, sizeof(vertex2D), &v->color);
+    Array attribs = (Array) { .length = 3, .data = (VertexAttributeType[]){0, 0, 3}};
+    init_vertex_layout(sizeof(vertex2D), attribs);
 }
 static void setup_vertex3D_attributes() {
-    /* local constant */
-    vertex3D* v = 0;
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, 5126, 0, sizeof(vertex3D), &v->pos);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, 5126, 0, sizeof(vertex3D), &v->normal);
-    glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, 5126, 0, sizeof(vertex3D), &v->uv);
+    Array attribs = (Array) { .length = 3, .data = (VertexAttributeType[]){1, 1, 0}};
+    init_vertex_layout(sizeof(vertex3D), attribs);
 }
 static DrawBuffers create_draw_buffers1(Mesh mesh) {
     DrawBuffers db;
@@ -3922,7 +4180,10 @@ static DrawBuffers create_draw_buffers2() {
     glBindBuffer(34962, 0);
     return db;
 }
-static void update_buffers(DrawBuffers* db, vertex2D* vertices, uint32 vertices_count, uint32* indices, uint32 indices_count) {
+static void update_buffers1(DrawBuffers* db, Array vertices, Array indices) {
+    update_buffers2(db, vertices.data, vertices.length, indices.data, indices.length);
+}
+static void update_buffers2(DrawBuffers* db, vertex2D* vertices, uint32 vertices_count, uint32* indices, uint32 indices_count) {
     db->elements_count = (int32)indices_count;
     update_buffer(db->vbo, (vertices_count * sizeof(vertex2D)), vertices);
     update_buffer(db->ebo, (indices_count * sizeof(uint32)), indices);
@@ -3972,7 +4233,10 @@ static void flip_indices2(Mesh mesh, uint32 base, uint32 len) {
         i += 3;
     }
 }
-static Mesh gen_plane(uint32 size) {
+static Mesh gen_plane1(uint32 size) {
+    return gen_plane2(size, 1.000000);
+}
+static Mesh gen_plane2(uint32 size, float32 uv_scale) {
     uint32 vsize = (size + 1);
     float32 half_size = ((float32)size / 2);
     Mesh mesh = (Mesh) {0};
@@ -3984,7 +4248,7 @@ static Mesh gen_plane(uint32 size) {
     for (uint32 xi = 0; xi < vsize; xi++) {
         for (uint32 yi = 0; yi < vsize; yi++) {
             uint32 vi = ((xi * vsize) + yi);
-            mesh.vertices[vi] = (vertex3D) {.pos = {(xi - half_size), 0, (yi - half_size)}, .normal = (vec3){0, 1, 0}, .uv = {(xi / (size - 1)), (yi / (size - 1))}};
+            mesh.vertices[vi] = (vertex3D) {.pos = {(xi - half_size), 0, (yi - half_size)}, .normal = (vec3)(vec3) {0, 1, 0}, .uv = {(((float32)xi / size) * uv_scale), (((float32)yi / size) * uv_scale)}};
             if ((xi < size) && (yi < size)) {
                 mesh.indices[i++] = vi;
                 mesh.indices[i++] = (vi + 1);
@@ -4039,8 +4303,27 @@ static void gizmo_point4(vec3 pos, Color color, float32 size) {
     GizmoPoint gp = (GizmoPoint) {.pos = pos, .color = color, .size = size};
     list_add(&gizmo_points_list, &gp);
 }
-static void gizmo_transform1(Transform* tr) {
-    gizmo_point3(tr->position, (Color){255, 255, 255, 255});
+static bool gizmo_transform1(Transform* tr, Camera cam) {
+    vec3 ray = camera_ray(cam, screen2ndc((float32)mouse_x, (float32)mouse_y));
+    mat4 m = to_matrix(*tr);
+    gizmo_point3(tr->position, (Color)(Color) {255, 255, 255, 255});
+    if (gizmo_transform_axis(tr, ray, xyz(m.row1), (Color)(Color) {255, 0, 0, 255}, cam)) return 1;
+    if (gizmo_transform_axis(tr, ray, xyz(m.row2), (Color)(Color) {0, 255, 0, 255}, cam)) return 1;
+    if (gizmo_transform_axis(tr, ray, xyz(m.row3), (Color)(Color) {0, 0, 255, 255}, cam)) return 1;
+    return 0;
+}
+static bool gizmo_transform_axis(Transform* tr, vec3 ray, vec3 axis, Color color, Camera cam) {
+    float32 size = 0.100000;
+    if (dot2(ray, normalize2(sub2(add2(tr->position, axis), cam.transform.position))) > 0.999000) {
+        size *= 2;
+        if (mouse(0)) {
+            tr->position = add2(tr->position, axis);
+            return 1;
+        }
+    }
+    for (int32 it = 1; it < 5; it++) gizmo_point4(add2(tr->position, mul8(axis, (it / 5.000000))), color, 0.050000);
+    gizmo_point4(add2(tr->position, axis), color, size);
+    return 0;
 }
 static void gizmo_transform2(Transform2D* tr) {
 }
@@ -4054,7 +4337,7 @@ static void gizmo_golden_sphere(uint32 n, vec3 center, float32 radius) {
         float32 phi = acosf((1 - ((2 * (it + 0.500000)) / ((float32)n))));
         float32 angle = (((3.141593 * 2.000000) * it) / golden_ratio);
         vec3 pos = (vec3) {(cosf(angle) * sinf(phi)), (sinf(angle) * sinf(phi)), cosf(phi)};
-        gizmo_point3(add2(mul4(pos, radius), center), (Color){0, 255, 255, 255});
+        gizmo_point3(add2(mul8(pos, radius), center), (Color)(Color) {0, 255, 255, 255});
     }
 }
 static void free_obj(OBJ_Data obj) {
@@ -4110,17 +4393,17 @@ static OBJ_Data load_obj(char* filename) {
     obj.texture_coords = list_create(sizeof(vec2));
     obj.normals = list_create(sizeof(vec3));
     obj.indices = list_create(sizeof(OBJ_VertexIndices));
-    // local procedure
-    // local procedure
-    // local procedure
+    /* local procedure */;
+    /* local procedure */;
+    /* local procedure */;
     char* cursor = source;
     while (*cursor) {
         string line = substr_until(cursor, '\n');
         switch (line.chars[0]) {
-            case '#':
+            case '#':;
             break;
-            case 'g':
-            case 'o':
+            case 'g':;
+            case 'o':;
             {
                 OBJ_Object o = (OBJ_Object) {0};
                 o.group_type = line.chars[0];
@@ -4131,34 +4414,34 @@ static OBJ_Data load_obj(char* filename) {
                 list_add(&obj.objects, &o);
             }
             break;
-            case 'v':
+            case 'v':;
             switch (line.chars[1]) {
-                case ' ':
+                case ' ':;
                 {
                     line.chars += 2;
                     vec3 v = parse_vec3(line.chars);
                     list_add(&obj.vertices, &v);
                 }
                 break;
-                case 't':
+                case 't':;
                 {
                     line.chars += 3;
                     vec2 vt = parse_vec2(line.chars);
                     list_add(&obj.texture_coords, &vt);
                 }
                 break;
-                case 'n':
+                case 'n':;
                 {
                     line.chars += 3;
                     vec3 vn = parse_vec3(line.chars);
                     list_add(&obj.normals, &vn);
                 }
                 break;
-                default:
+                default:;
                 break;
             }
             break;
-            case 'f':
+            case 'f':;
             {
                 line.chars += 2;
                 OBJ_VertexIndices i = parse_indices(&line.chars);
@@ -4171,7 +4454,7 @@ static OBJ_Data load_obj(char* filename) {
                 list_add(&obj.indices, &i);
             }
             break;
-            default:
+            default:;
             {
             }
             break;
@@ -4215,8 +4498,8 @@ static Mesh obj_to_mesh(OBJ_Data obj) {
     entry* index_lookup = malloc(index_lookup_size);
     memset(index_lookup, 0, index_lookup_size);
     uint32 collision_count = 0;
-    // local procedure
-    // local procedure
+    /* local procedure */;
+    /* local procedure */;
     for (uint32 i = 0; i < ind_len; i++) {
         OBJ_VertexIndices a = obj.indices[(i + index_offset)];
         uint64 hash = (obj_index_hash(a) % ind_len);
@@ -4259,7 +4542,7 @@ static Mesh obj_to_flatshaded_mesh(OBJ_Data obj) {
     }
     return mesh;
 }
-static Color rgba(uint32 i) {
+static Color rgba1(uint32 i) {
     Color c;
     uint8* b = (uint8*)&i;
     c.r = b[3];
@@ -4267,6 +4550,9 @@ static Color rgba(uint32 i) {
     c.b = b[1];
     c.a = b[0];
     return c;
+}
+static Color rgba2(float32 r, float32 g, float32 b, float32 a) {
+    return (Color) {(uint8)(r * 255), (uint8)(g * 255), (uint8)(b * 255), (uint8)(a * 255)};
 }
 static Color color_from_vec(vec3 v) {
     Color c;
@@ -4285,47 +4571,172 @@ static vec4 color_to_vec4(Color c) {
 static Color alpha(Color c, uint8 a) {
     return (Color) {c.r, c.g, c.b, a};
 }
+static GLenum get_opengl_filter(TextureFilter filter) {
+    switch (filter) {
+        case 0:;
+        return 9728;
+        case 1:;
+        return 9729;
+    }
+    return 0;
+}
+static GLenum get_opengl_wrap_mope(TextureWrapMode mode) {
+    switch (mode) {
+        case 0:;
+        return 10497;
+        case 1:;
+        return 33648;
+        case 2:;
+        return 33071;
+    }
+    return 0;
+}
+static GLint get_opengl_internal_format(TextureFormat format) {
+    switch (format) {
+        case 0:;
+        return 34843;
+        case 1:;
+        return 34842;
+        case 2:;
+        return 32849;
+        case 3:;
+        return 32856;
+        case 4:;
+        return 6402;
+    }
+    return 0;
+}
+static void init_render_buffer(uint32 render_buffer, TextureFormat format, uint32 w, uint32 h) {
+    glBindRenderbuffer(36161, render_buffer);
+    glRenderbufferStorage(36161, get_opengl_internal_format(format), (GLsizei)w, (GLsizei)h);
+    glBindRenderbuffer(36161, 0);
+}
+static Framebuffer create_framebuffer(uint32 w, uint32 h, Array color_attachments, bool has_depth_buffer) {
+    Framebuffer fr = (Framebuffer) {0};
+    fr.width = w;
+    fr.height = h;
+    uint32 attach_count = color_attachments.length;
+    fr.attachments.data = malloc((attach_count * sizeof(FramebufferAttachment)));
+    fr.attachments.length = attach_count;
+    GLenum* bufs = malloc((attach_count * sizeof(GLenum)));
+    glGenFramebuffers(1, &fr.gl_handle);
+    bind1(fr);
+    if (has_depth_buffer) {
+        glGenRenderbuffers(1, &fr.depth_buffer_handle);
+        printf("%s%u%s", "[INFO]: OpenGL generated renderbuffer: ", fr.depth_buffer_handle, "\n");
+        init_render_buffer(fr.depth_buffer_handle, 4, w, h);
+        glFramebufferRenderbuffer(36160, 36096, 36161, fr.depth_buffer_handle);
+    }
+    for (int32 it = 0; it < attach_count; it++) {
+        bufs[it] = (GLenum)(36064 + it);
+        uint32 texture = gen_opengl_texture2D(w, h, 0, 0, ((TextureFormat*)color_attachments.data)[it]);
+        ((FramebufferAttachment*)fr.attachments.data)[it].format = ((TextureFormat*)color_attachments.data)[it];
+        ((FramebufferAttachment*)fr.attachments.data)[it].gl_handle = texture;
+        glFramebufferTexture2D(36160, bufs[it], 3553, texture, 0);
+    }
+    glDrawBuffers(attach_count, bufs);
+    free(bufs);
+    GLenum status = glCheckFramebufferStatus(36160);
+    if (status != 36053) {
+        printf("%s%u%s", "[ERROR]: Framebuffer status code: ", (uint32)status, "\n");
+    }
+    glBindFramebuffer(36160, 0);
+    return fr;
+}
+static void bind1(Framebuffer fr) {
+    glBindFramebuffer(36160, fr.gl_handle);
+}
+static void bind_default_framebuffer() {
+    glBindFramebuffer(36160, 0);
+}
+static void blit1(Framebuffer dst, Framebuffer src, ivec2 dst_p1, ivec2 dst_p2, ivec2 src_p1, ivec2 src_p2, GLbitfield mask, TextureFilter filter) {
+    glBindFramebuffer(36008, src.gl_handle);
+    glBindFramebuffer(36009, dst.gl_handle);
+    glBlitFramebuffer(src_p1.x, src_p1.y, src_p2.x, src_p2.y, dst_p1.x, dst_p1.y, dst_p2.x, dst_p2.y, mask, get_opengl_filter(filter));
+}
+static void blit2(Framebuffer dst, Framebuffer src, ivec2 p1, ivec2 p2, GLbitfield mask, TextureFilter filter) {
+    blit1(dst, src, p1, p2, p1, p2, mask, filter);
+}
+static void blit3(Framebuffer dst, Framebuffer src, GLbitfield mask, TextureFilter filter) {
+    ivec2 dst_size = (ivec2) {dst.width, dst.height};
+    ivec2 src_size = (ivec2) {src.width, src.height};
+    blit1(dst, src, (ivec2)(ivec2) {0, 0}, dst_size, (ivec2)(ivec2) {0, 0}, src_size, mask, filter);
+}
+static void resize(Framebuffer* fr, uint32 w, uint32 h) {
+    fr->width = w;
+    fr->height = h;
+    if (fr->depth_buffer_handle) {
+        init_render_buffer(fr->depth_buffer_handle, 4, w, h);
+    }
+    for (int32 it = 0; it < fr->attachments.length; it++) {
+        bind_texture2D(((FramebufferAttachment*)fr->attachments.data)[it].gl_handle, 0);
+        glTexImage2D(3553, 0, get_opengl_internal_format(((FramebufferAttachment*)fr->attachments.data)[it].format), w, h, 0, 6408, 5121, 0);
+    }
+    bind_texture2D(0, 0);
+}
+static void delete(Framebuffer fr) {
+}
 static Texture2D load_texture2D(char* name) {
     Image image = load_bitmap(name);
     Texture2D tex = create_texture2D(image);
-    set_filter(tex, 9728);
+    set_filter2(tex, 0);
     free(image.pixels);
     return tex;
 }
+static uint32 gen_opengl_texture2D(uint32 width, uint32 height, TextureFilter filter, TextureWrapMode wrap, TextureFormat internal_format) {
+    uint32 gl_handle = 0;
+    glGenTextures(1, &gl_handle);
+    glBindTexture(3553, gl_handle);
+    set_wrap_mode1(0);
+    set_filter1(1);
+    glTexImage2D(3553, 0, get_opengl_internal_format(internal_format), width, height, 0, 6408, 5121, 0);
+    glBindTexture(3553, 0);
+    return gl_handle;
+}
 static Texture2D create_texture2D(Image image) {
-    Texture2D tex;
+    Texture2D tex = (Texture2D) {0};
     tex.width = image.width;
     tex.height = image.height;
     glGenTextures(1, &tex.gl_handle);
     glBindTexture(3553, tex.gl_handle);
-    glTexParameteri(3553, 10242, 10497);
-    glTexParameteri(3553, 10243, 10497);
-    /* local constant */
-    glTexParameteri(3553, 10241, 9729);
-    glTexParameteri(3553, 10240, 9729);
+    set_wrap_mode1(0);
+    set_filter1(1);
     glTexImage2D(3553, 0, 32856, image.width, image.height, 0, 6408, 5121, image.pixels);
     glGenerateMipmap(3553);
     glBindTexture(3553, 0);
     printf("%s%u%s%u%s%u%s", "[INFO]: OpenGL texture ", tex.gl_handle, " created (", tex.width, "x", tex.height, ")\n");
     return tex;
 }
-static void bind(Texture2D tex) {
-    glBindTexture(3553, tex.gl_handle);
+static void bind2(Texture2D tex) {
+    bind_texture2D(tex.gl_handle, 0);
 }
-static void set_filter(Texture2D tex, uint32 filter) {
-    bind(tex);
-    glTexParameteri(3553, 10241, filter);
-    glTexParameteri(3553, 10240, filter);
+static void bind3(Texture2D tex, uint32 index) {
+    bind_texture2D(tex.gl_handle, index);
+}
+static void bind_texture2D(uint32 gl_handle, uint32 index) {
+    glActiveTexture((33984 + index));
+    glBindTexture(3553, gl_handle);
+}
+static void set_wrap_mode1(TextureWrapMode mode) {
+    glTexParameteri(3553, 10242, get_opengl_wrap_mope(mode));
+    glTexParameteri(3553, 10243, get_opengl_wrap_mope(mode));
+}
+static void set_wrap_mode2(Texture2D tex, TextureWrapMode mode) {
+    bind2(tex);
+    set_wrap_mode1(mode);
     glBindTexture(3553, 0);
 }
-static BackgroundProp* spawn_background_prop(vec2 pos, float32 depth, Texture2D tex) {
-    BackgroundProp prop = (BackgroundProp) {0};
-    prop.tr.pos = pos;
-    prop.depth = depth;
-    prop.tr.scale = ((float32)tex.width / 16.000000);
-    prop.tex_handle = tex.gl_handle;
-    prop.tr.rot = (random(global_seed++) * 3.141593);
-    return list_add(&background_props, &prop);
+static void set_filter1(TextureFilter filter) {
+    glTexParameteri(3553, 10241, get_opengl_filter(filter));
+    glTexParameteri(3553, 10240, get_opengl_filter(filter));
+}
+static void set_filter2(Texture2D tex, TextureFilter filter) {
+    bind2(tex);
+    set_filter1(filter);
+    glBindTexture(3553, 0);
+}
+static Entity* get_player() {
+    return &global_entity_pool[0];
 }
 static void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
     Bullet p = (Bullet) {pos, vel, team_id};
@@ -4340,59 +4751,57 @@ static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
     p.life_time = (random01() * 2.500000);
     list_add(&particles, &p);
 }
+static void spawn_explosion(uint32 size, vec2 pos, vec2 vel, float32 spread) {
+    for (int32 it = 0; it < ((40 * size) * size); it++) {
+        vec2 r = random_unit_vec22(spread);
+        spawn_particle(pos, add1(vel, r), particle);
+    }
+}
 static void draw_particles() {
     float32 dt = (float32)deltatime;
     uint32 count = list_length(particles);
     for (int32 it = 0; it < count; it++) {
         Particle* p = &particles[it];
-        p->pos = add1(p->pos, mul2(p->vel, dt));
-        p->vel = mul2(p->vel, random_range(it, 0.960000, 1));
+        p->pos = add1(p->pos, mul7(p->vel, dt));
+        p->vel = mul7(p->vel, random_range(it, 0.960000, 1));
         p->life_time -= dt;
-        bind(p->tex);
+        bind2(p->tex);
         Transform2D tr = (Transform2D) {p->pos, p->rot, 1};
         apply_transform2(tr, 0);
         vec2 scale = (vec2) {p->tex.width, p->tex.height};
-        apply_entity_scale(mul2(scale, (1.000000 / 16.000000)));
-        /* local constant */
-        /* local constant */
-        apply_color(make_vec6(lerp3(p->life_time, (vec3){(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3){1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
+        apply_entity_scale(mul7(scale, (1.000000 / 16.000000)));
+        /* local constant */;
+        /* local constant */;
+        apply_color(make_vec6(lerp3(p->life_time, (vec3)(vec3) {(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3)(vec3) {1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
         draw_elements1(quad_db);
         if (p->life_time < 0) list_unordered_remove(particles, (uint32)it);
     }
 }
+static void kill_entity(Entity* e) {
+    e->hp = 0;
+}
 static bool entity_is_dead(Entity e) {
     return (e.hp == 0);
 }
-static Entity* spawn_entity(vec2 pos, Texture2D tex) {
-    Entity* e = 0;
-    for (int32 it = 0; it < 256; it++) {
-        if (entity_is_dead(entity_pool[it])) {
-            e = &entity_pool[it];
-            break;
-        }
-    }
-    if (e == 0) {
-        printf("%s", "Error: Exceded max entity count\n");
-    }
+static Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
+    Entity* e = list_append(pool);
+    *e = (Entity) {0};
     e->tr.pos = pos;
+    e->tr.rot = 0;
     e->tr.scale = ((float32)tex.width / 16.000000);
     e->depth = 0;
     e->hp = 8;
     e->tex_handle = tex.gl_handle;
-    e->tr.rot = (random(global_seed++) * 3.141593);
     return e;
 }
-static void kill_entity(Entity* e) {
-    e->hp = 0;
-}
 static void accelerate(Entity* e, vec2 acc) {
-    e->vel = add1(e->vel, mul2(acc, (float32)deltatime));
+    e->vel = add1(e->vel, mul7(acc, (float32)deltatime));
 }
 static void thrust(Entity* e, vec2 dir) {
-    /* local constant */
+    /* local constant */;
     dir.x *= 0.500000;
     if (dir.y < 0) dir.y *= 0.500000;
-    dir = mul2(dir, 10);
+    dir = mul7(dir, 10);
     accelerate(e, rotate_vec(dir, e->tr.rot));
 }
 static void turn_to(Entity* e, vec2 target) {
@@ -4405,19 +4814,19 @@ static void fire_gun(Entity* e) {
     if (e->gun_recharge <= 0) {
         vec2 disp = up(e->tr);
         disp.x *= -1;
-        vec2 v = add1(mul2(disp, 50), e->vel);
-        /* local constant */
+        vec2 v = add1(mul7(disp, 50), e->vel);
+        /* local constant */;
         v = add1(v, random_unit_vec22(3));
         spawn_bullet(add1(e->tr.pos, disp), v, e->team_id);
         e->gun_recharge = 0.100000;
     }
 }
 static void update_entity(Entity* e) {
-    e->tr.pos = add1(e->tr.pos, mul2(e->vel, (float32)deltatime));
+    e->tr.pos = add1(e->tr.pos, mul7(e->vel, (float32)deltatime));
     e->tr.rot += (e->ang_vel * (float32)deltatime);
-    e->vel = mul2(e->vel, 0.990000);
+    e->vel = mul7(e->vel, 0.990000);
     e->gun_recharge -= (float32)deltatime;
-    vec4 color = (vec4){1, 1, 1, 1};
+    vec4 color = (vec4)(vec4) {1, 1, 1, 1};
     for (int32 it = 0; it < list_length(bullets); it++) {
         Bullet p = bullets[it];
         if (p.team_id == e->team_id) continue;
@@ -4425,14 +4834,10 @@ static void update_entity(Entity* e) {
         if (intersection < 0) {
             color = (vec4) {100, 100, 100, 0};
             e->hp--;
-            e->vel = add1(e->vel, mul2(p.vel, 0.004000));
+            e->vel = add1(e->vel, mul7(p.vel, 0.004000));
             list_unordered_remove(bullets, (uint32)it);
             if (e->hp == 0) {
-                for (int32 it = 0; it < ((40 * e->tr.scale) * e->tr.scale); it++) {
-                    /* local constant */
-                    vec2 r = random_unit_vec22(7);
-                    spawn_particle(e->tr.pos, add1(e->vel, r), particle);
-                }
+                spawn_explosion(e->tr.scale, e->tr.pos, e->vel, 7);
                 break;
             }
         }
@@ -4441,26 +4846,139 @@ static void update_entity(Entity* e) {
     apply_color(color);
     glBindTexture(3553, e->tex_handle);
     draw_elements1(quad_db);
+    if (e->behaviour) e->behaviour(e);
 }
 static void update_ai(Entity* e) {
-    turn_to(e, player->tr.pos);
-    float32 dist = length1(sub1(e->tr.pos, player->tr.pos));
+    turn_to(e, get_player()->tr.pos);
+    float32 dist = length1(sub1(e->tr.pos, get_player()->tr.pos));
     if (dist < 15) fire_gun(e);
     float32 t = (dist - 5);
     t = (t / abs1(t));
-    thrust(e, (vec2){0, t});
+    thrust(e, (vec2)(vec2) {0, t});
 }
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     float32 len = length1(sub1(p0, p1));
     float32 r = (r0 + r1);
     return (len - r);
 }
+static void update_entity_list(Entity* ens) {
+    for (int32 it = 0; it < list_length(ens); it++) {
+        Entity* e = &ens[it];
+        if (entity_is_dead(*e)) continue;
+        update_entity(e);
+    }
+}
+static void update_entities() {
+    draw_background(camera.pos);
+    ivec2 chunk_coord = get_chunk_coord(get_player()->tr.pos);
+    /* local constant */;
+    /* local constant */;
+    /* local constant */;
+    /* local constant */;
+    Array chunk_coord_offsets = (Array) { .length = 4, .data = (ivec2[]){(ivec2) {0, 0}, (ivec2) {1, 0}, (ivec2) {0, 1}, (ivec2) {1, 1}}};
+    Array chunks = (Array) { .length = 4, .data = (Chunk*[]){&chunk_1, &chunk_2, &chunk_3, &chunk_4}};
+    int32 coord_index = 0;
+    Array coords = (Array) { .length = 4, .data = (ivec2[]){(ivec2) {0}, (ivec2) {0}, (ivec2) {0}, (ivec2) {0}}};
+    for (int32 it = 0; it < 4; it++) {
+        ivec2 coord = add4(chunk_coord, ((ivec2*)chunk_coord_offsets.data)[it]);
+        if (equals1(coord, chunk_1.coord)) {
+            ((Chunk**)chunks.data)[0] = 0;
+            continue;
+        } else if (equals1(coord, chunk_2.coord)) {
+            ((Chunk**)chunks.data)[1] = 0;
+            continue;
+        } else if (equals1(coord, chunk_3.coord)) {
+            ((Chunk**)chunks.data)[2] = 0;
+            continue;
+        } else if (equals1(coord, chunk_4.coord)) {
+            ((Chunk**)chunks.data)[3] = 0;
+            continue;
+        } else {
+            ((ivec2*)coords.data)[coord_index++] = coord;
+        }
+    }
+    coord_index = 0;
+    for (int32 it = 0; it < chunks.length; it++) {
+        if (((Chunk**)chunks.data)[it] == 0) continue;
+        spawn_chunk(((Chunk**)chunks.data)[it], ((ivec2*)coords.data)[coord_index++]);
+    }
+    /* local procedure */;
+    update_entity_list(global_entity_pool);
+    update_entity_list(chunk_1.entities);
+    update_entity_list(chunk_2.entities);
+    update_entity_list(chunk_3.entities);
+    update_entity_list(chunk_4.entities);
+    bind2(projectile);
+    uint32 bullets_count = list_length(bullets);
+    for (int32 it = 0; it < bullets_count; it++) {
+        Bullet* p = &bullets[it];
+        Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
+        apply_transform1(tr);
+        vec2 particle_scale = (vec2) {0.250000, 1};
+        apply_entity_scale(particle_scale);
+        draw_elements1(quad_db);
+        p->pos = add1(p->pos, mul7(p->vel, (float32)deltatime));
+    }
+    disable_depth_test();
+    draw_particles();
+}
+static void draw_background(vec2 center) {
+    /* local constant */;
+    /* local constant */;
+    for (int32 x = -10; x < (10 + 1); x++) for (int32 y = -10; y < (10 + 1); y++) {
+        ivec2 p_seed = make_ivec1(round2multiple2(center, 10));
+        p_seed.x += (x * 10);
+        p_seed.y += (y * 10);
+        int32 seed = (p_seed.x + (p_seed.y * 100));
+        float32 depth = map(random(seed++), -1, 1, 0.300000, 1.000000);
+        Transform2D tr = (Transform2D) {0};
+        tr.pos = add1(make_vec8(p_seed), mul7(make_vec1(random(seed++), random(seed++)), (10 / 2.000000)));
+        tr.rot = (random(seed++) * 3.141593);
+        tr.scale = ((float32)asteroid.width / 16.000000);
+        apply_transform2(tr, depth);
+        apply_color((vec4)(vec4) {1, 1, 1, 1});
+        bind2(asteroid);
+        draw_elements1(quad_db);
+    }
+}
+static ivec2 get_chunk_coord(vec2 pos) {
+    return make_ivec1(mul7(round2multiple2(pos, 10), (1.000000 / 10)));
+}
+static Chunk init_chunk() {
+    Chunk s = (Chunk) {0};
+    s.coord = (ivec2) {999, 999};
+    s.entities = list_create(sizeof(Entity));
+    return s;
+}
+static void spawn_chunk(Chunk* chunk, ivec2 coord) {
+    chunk->coord = coord;
+    list_clear(chunk->entities);
+    int32 seed = ((coord.x & 65535) | ((coord.y << 16) & 4294901760));
+    printf("%s{x = %d, y = %d}%s%d%s", "spawn chunk ", coord.x, coord.y, " with seed: ", seed, "\n");
+    /* local constant */;
+    vec2 chunk_pos = make_vec8(sub4(mul10(coord, 10), (ivec2)(ivec2) {(10 / 2), (10 / 2)}));
+    for (int32 it = 0; it < 5; it++) {
+        /* local constant */;
+        vec2 pos = (vec2) {(random(seed++) * (10 / 2)), (random(seed++) * (10 / 2))};
+        Entity* e = spawn_entity(&chunk->entities, add1(pos, chunk_pos), asteroid);
+        e->team_id = 2;
+        e->hp = 10;
+        e->depth = 0.010000;
+    }
+}
+static void drop_cargo(Entity* en, Cargo* cargo) {
+}
+static void draw_inventory() {
+}
 static void __static_init() {
     uniform_buffer_objects = (UBO**)list_create(sizeof(UBO*));
-    entity_pool = calloc(1, (256 * sizeof(Entity)));
+    global_entity_pool = list_create(sizeof(Entity));
     bullets = list_create(sizeof(Bullet));
     particles = list_create(sizeof(Particle));
-    background_props = list_create(sizeof(BackgroundProp));
+    chunk_1 = init_chunk();
+    chunk_2 = init_chunk();
+    chunk_3 = init_chunk();
+    chunk_4 = init_chunk();
     num_str = malloc(20);
 }
 int main(int argc, char** argv) {

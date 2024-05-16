@@ -2,15 +2,23 @@
 include "../grax/grax.pog";
 
 include "sector.pog";
+include "inventory.pog";
 
-// ../plang/bin/plang.exe main.pog cflags -lglfw3dll
+// ..\plang\bin\plang.exe main.pog cflags -lglfw3dll
 
 /*
+    A civilication florishing in an asteroid field with abundant riches, and yet conflict is prevalent
+*/
 
-    // - explosion effect
+/* TODOs:
     - thrusters effect
-    // - enemy fight back
-    // - angular valocity
+    - sub-particle trail for explosions
+    - enemy spawn
+    - cargo inventory
+        - asteroids drop minerals
+        - ships drop cargo hold
+Priority:
+    - infinite asteroid generation
 
 */
 
@@ -19,7 +27,6 @@ void apply_camera(Transform2D t) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "cam_pos"), t.pos.x, t.pos.y);
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "cam_rot"), t.rot);
 }
-
 
 void apply_transform(Transform2D t) { apply_transform(t, 0); }
 void apply_transform(Transform2D t, float32 depth) {
@@ -36,7 +43,6 @@ void apply_color(vec4 v) {
     glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
 }
 
-
 void apply_entity_scale(vec2 scale) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
 }
@@ -49,6 +55,8 @@ vec2 get_mouse_world_coord(Transform2D cam_tr) {
 
     return local2world(cam_tr, x, y);
 }
+
+
 
 int32 global_seed = 0;
 
@@ -67,6 +75,8 @@ float32 random_range(int32 seed, float32 min, float32 max) {
     return lerp((random(seed) + 1.0) / 2.0, min, max);
 }
 
+
+
 DrawBuffers quad_db;
 
 Texture2D spaceship;
@@ -76,16 +86,35 @@ Texture2D asteroid;
 Texture2D projectile;
 Texture2D particle;
 
-
-void main() {
-    grax_init();
-
+void loadassets() {
     spaceship = load_texture2D("sprite_sheet.bmp");
     spaceship2 = load_texture2D("spaceship2.bmp");
     spaceship_from_internet = load_texture2D("from_internet.bmp");
     asteroid = load_texture2D("asteroid.bmp");
     projectile = load_texture2D("proj.bmp");
     particle = load_texture2D("particle.bmp");
+}
+
+
+Transform2D camera = {0,0, 0, 10};
+
+
+void main() {
+
+
+    // {
+    //     float32 x = 0;
+    //     for 0 .. 100 {
+    //         print(x, " -> ", round2multiple(x, 3), "\n");
+    //         x += 0.1;
+    //     }
+    //     return;
+    // }
+
+
+    grax_init();
+
+    loadassets();
 
     quad_db = create_draw_buffers();
     {
@@ -101,126 +130,63 @@ void main() {
             0, 1, 2,
             0, 2, 3
         };
-        update_buffers(*quad_db, verts.data, verts.length, inds.data, inds.length);
+        update_buffers(*quad_db, verts, inds);
     }
 
-    player = spawn_entity(vec2_zero, spaceship2);
+    let player = spawn_entity(*global_entity_pool, vec2_zero, spaceship2);
     player.hp = 100;
     player.team_id = 0;
-    Transform2D camera = {0,0, 0, 10};
 
-
-    // init background
-    for 0 .. 400 {
-        vec2 pos = {random(global_seed++), random(global_seed++)};
-
-        let r = random(global_seed++);
-        let depth = map(r, -1, 1, 0.3, 1.0);
-        spawn_background_prop(mul(pos, 100), depth, asteroid);
-    }
-
-    // init interactable asteroids
-    for 0 .. 100 {
-        vec2 pos = {random(global_seed++), random(global_seed++)};
-        let e = spawn_entity(mul(pos, 50), asteroid);
-        e.team_id = 2;
-        e.hp = 20;
-        e.depth = 0.01;
-    }
-
-    glClearColor(0,0,0,0);
+    set_clear_color(Black);
 
     while grax_loop() {
-
-        use(*default2d_shader);
-        enable_alpha_blending();
-        enable_depth_test();
-
-        vec2 mouse_world_pos = get_mouse_world_coord(camera);
-
-        if mouse_pressed(Right_Mouse) {
-            static uint32 ships_index = 0;
-            Texture2D[] ships = {
-                spaceship,
-                spaceship2,
-                spaceship_from_internet
-            };
-            let e = spawn_entity(mouse_world_pos, ships[ships_index++ % ships.length]);
-            e.team_id = 1;
-            e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
-        }
-
-        camera.pos = lerp(0.1, camera.pos, player.tr.pos);
-        camera.scale = 10 + length(player.vel) / 10;
-
-        apply_camera(camera);
-
-        { // update player
-            thrust(player, wasd);
-            turn_to(player, mouse_world_pos);
-            if mouse(Left_Mouse) fire_gun(player);
-            if entity_is_dead(@player) {
-                player.hp = 100;
-                player.tr.pos = vec2_zero;
-            }
-
-            const font_size = 0.1;
-            draw_text({-1, 1 - font_size / 2} as vec2, font_size, to_string(player.hp as uint64), White);
-        }
-
-
-        static uint32 particles_drawn_prev = 0;
-        static uint32 entities_drawn_prev = 0;
-        uint32 entities_drawn = 0;
-
-        for 0 .. list_length(background_props) {
-            let prop = *background_props[it];
-
-            apply_transform(prop.tr, prop.depth);
-            apply_color(vec4_one);
-            glBindTexture(GL_TEXTURE_2D, prop.tex_handle);
-            draw_elements(quad_db);
-
-            entities_drawn++;
-        }
-
-
-        for 0 .. entity_pool_count {
-            let e = *entity_pool[it];
-            if entity_is_dead(@e) continue;
-
-            update_entity(e);
-
-            if e != player and e.tex_handle != asteroid.gl_handle  update_ai(e);
-
-            entities_drawn++;
-        }
-
-        if entities_drawn != entities_drawn_prev  print(entities_drawn, " entities drawn\n");
-        entities_drawn_prev = entities_drawn;
-
-        bind(projectile);
-        uint32 bullets_count = list_length(bullets);
-        for 0 .. bullets_count {
-            let p = *bullets[it];
-
-
-            Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
-            apply_transform(tr);
-
-            vec2 particle_scale = {0.25, 1}; // TODO: hard coded dimentions here
-            apply_entity_scale(particle_scale);
-            draw_elements(quad_db);
-
-            p.pos = add(p.pos, mul(p.vel, deltatime as float32));
-        }
-
-        if bullets_count != particles_drawn_prev   print(bullets_count, " particles drawn\n");
-        particles_drawn_prev = bullets_count;
-
-
-        disable_depth_test();
-        draw_particles();
-
+        drawframe();
     }
+}
+
+
+void drawframe() {
+    use(*default2d_shader);
+    enable_alpha_blending();
+    enable_depth_test();
+
+    let player = get_player();
+
+    camera.pos = lerp(0.1, camera.pos, player.tr.pos);
+    camera.scale = 10 + length(player.vel) / 10;
+    apply_camera(camera);
+
+
+    vec2 mouse_world_pos = get_mouse_world_coord(camera);
+
+    if mouse_pressed(Right_Mouse) {
+        static uint32 ships_index = 0;
+        Texture2D[] ships = {
+            spaceship,
+            spaceship2,
+            spaceship_from_internet
+        };
+        let e = spawn_entity(*global_entity_pool, mouse_world_pos, ships[ships_index++ % ships.length]);
+        e.tr.rot = random(global_seed++) * Pi;
+        e.team_id = 1;
+        e.behaviour = update_ai;
+        e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+    }
+
+
+
+    { // update player
+        thrust(player, wasd);
+        turn_to(player, mouse_world_pos);
+        if mouse(Left_Mouse) fire_gun(player);
+        if entity_is_dead(@player) {
+            player.hp = 100;
+            player.tr.pos = vec2_zero;
+        }
+
+        const font_size = 0.1;
+        draw_text({-1, 1 - font_size / 2} as vec2, font_size, to_string(player.hp as uint64), White);
+    }
+
+    update_entities();
 }
