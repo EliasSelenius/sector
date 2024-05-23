@@ -14,6 +14,8 @@ int printf(const char* format, ...);
 typedef struct Array { void* data; uint32 length; } Array;
 
 // Structs forward declarations
+typedef struct Spritesheet_Boundingbox Spritesheet_Boundingbox;
+typedef struct Spritesheet Spritesheet;
 typedef struct List List;
 typedef struct GLFWvidmode GLFWvidmode;
 typedef struct GLFWgammaramp GLFWgammaramp;
@@ -63,6 +65,7 @@ typedef struct Item Item;
 typedef struct Cargo Cargo;
 
 // Enums
+typedef uint32 AnchorPoint;
 typedef uint32 VertexAttributeType;
 typedef uint32 TextureFormat;
 typedef uint32 TextureFilter;
@@ -798,6 +801,10 @@ struct Cargo {
     Item* items;
     uint32 capacity;
 };
+struct Spritesheet {
+    Spritesheet_Boundingbox* regions;
+    Image image;
+};
 struct SR_Token {
     string str;
     uint32 line;
@@ -830,6 +837,10 @@ struct OBJ_Object {
 struct Chunk {
     ivec2 coord;
     Entity* entities;
+};
+struct Spritesheet_Boundingbox {
+    ivec2 min;
+    ivec2 max;
 };
 struct mat2 {
     vec2 row1;
@@ -886,17 +897,6 @@ struct vertex2D {
     vec2 uv;
     Color color;
 };
-struct Entity {
-    void (*behaviour)(Entity*);
-    Transform2D tr;
-    float32 depth;
-    vec2 vel;
-    float32 ang_vel;
-    uint32 hp;
-    uint32 tex_handle;
-    uint32 team_id;
-    float32 gun_recharge;
-};
 struct Particle {
     vec2 pos;
     float32 rot;
@@ -909,6 +909,17 @@ struct mat4 {
     vec4 row2;
     vec4 row3;
     vec4 row4;
+};
+struct Entity {
+    void (*behaviour)(Entity*);
+    Transform2D tr;
+    float32 depth;
+    Texture2D texture;
+    vec2 vel;
+    float32 ang_vel;
+    uint32 hp;
+    uint32 team_id;
+    float32 gun_recharge;
 };
 struct Camera {
     Transform transform;
@@ -923,15 +934,19 @@ struct Camera {
 static void apply_camera(Transform2D t);
 static void apply_transform1(Transform2D t);
 static void apply_transform2(Transform2D t, float32 depth);
-static void apply_color_tint(Color color);
 static void apply_color(vec4 v);
 static void apply_entity_scale(vec2 scale);
+static void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color);
 static vec2 get_mouse_world_coord(Transform2D cam_tr);
 static vec2 random_unit_vec21();
 static vec2 random_unit_vec22(float32 max_len);
 static float32 random01();
 static float32 random_range(int32 seed, float32 min, float32 max);
 static void loadassets();
+static bool point_in_region(Spritesheet_Boundingbox bb, int32 x, int32 y);
+static Spritesheet_Boundingbox flood_fill(Image image, uint32 x, uint32 y);
+static Spritesheet load_spritesheet1(char* file_name);
+static Spritesheet load_spritesheet2(Image image);
 void __main();
 static void drawframe();
 int32 fopen_s(FILE** stream, char* filename, char* mode);
@@ -1181,9 +1196,23 @@ static float32 random(int32 seed);
 static vec2 random_vec2(float32 x, float32 y);
 static float32 gnoise(float32 x, float32 y);
 static int32 min1(int32 a, int32 b);
+static ivec2 min2(ivec2 a, ivec2 b);
+static ivec3 min3(ivec3 a, ivec3 b);
+static ivec4 min4(ivec4 a, ivec4 b);
 static int32 max1(int32 a, int32 b);
-static uint32 min2(uint32 a, uint32 b);
-static uint32 max2(uint32 a, uint32 b);
+static ivec2 max2(ivec2 a, ivec2 b);
+static ivec3 max3(ivec3 a, ivec3 b);
+static ivec4 max4(ivec4 a, ivec4 b);
+static uint32 min5(uint32 a, uint32 b);
+static uint32 max5(uint32 a, uint32 b);
+static float32 min6(float32 a, float32 b);
+static vec2 min7(vec2 a, vec2 b);
+static vec3 min8(vec3 a, vec3 b);
+static vec4 min9(vec4 a, vec4 b);
+static float32 max6(float32 a, float32 b);
+static vec2 max7(vec2 a, vec2 b);
+static vec3 max8(vec3 a, vec3 b);
+static vec4 max9(vec4 a, vec4 b);
 static int32 clamp1(int32 t, int32 min, int32 max);
 static float32 clamp2(float32 t, float32 min, float32 max);
 static float32 lerp1(float32 t, float32 a, float32 b);
@@ -1198,16 +1227,23 @@ static bool is_nan2(vec2 v);
 static vec2 make_vec1(float32 x, float32 y);
 static vec3 make_vec2(float32 x, float32 y, float32 z);
 static vec4 make_vec3(float32 x, float32 y, float32 z, float32 w);
+static ivec2 make_ivec1(int32 x, int32 y);
+static ivec3 make_ivec2(int32 x, int32 y, int32 z);
+static ivec4 make_ivec3(int32 x, int32 y, int32 z, int32 w);
 static vec3 make_vec4(vec2 xy, float32 z);
 static vec3 make_vec5(float32 x, vec2 yz);
+static ivec3 make_ivec4(ivec2 xy, int32 z);
+static ivec3 make_ivec5(int32 x, ivec2 yz);
 static vec4 make_vec6(vec3 xyz, float32 w);
 static vec4 make_vec7(float32 x, vec3 yzw);
+static ivec4 make_ivec6(ivec3 xyz, int32 w);
+static ivec4 make_ivec7(int32 x, ivec3 yzw);
 static vec2 make_vec8(ivec2 v);
 static vec3 make_vec9(ivec3 v);
 static vec4 make_vec10(ivec4 v);
-static ivec2 make_ivec1(vec2 v);
-static ivec3 make_ivec2(vec3 v);
-static ivec4 make_ivec3(vec4 v);
+static ivec2 make_ivec8(vec2 v);
+static ivec3 make_ivec9(vec3 v);
+static ivec4 make_ivec10(vec4 v);
 static bool equals1(ivec2 a, ivec2 b);
 static bool equals2(ivec3 a, ivec3 b);
 static bool equals3(ivec4 a, ivec4 b);
@@ -1268,6 +1304,12 @@ static float32 sqlength3(vec4 a);
 static float32 length1(vec2 a);
 static float32 length2(vec3 a);
 static float32 length3(vec4 a);
+static float32 dist1(vec2 a, vec2 b);
+static float32 dist2(vec3 a, vec3 b);
+static float32 dist3(vec4 a, vec4 b);
+static float32 sqdist1(vec2 a, vec2 b);
+static float32 sqdist2(vec3 a, vec3 b);
+static float32 sqdist3(vec4 a, vec4 b);
 static vec2 xy1(vec3 a);
 static vec2 xy2(vec4 a);
 static vec3 xyz(vec4 a);
@@ -1331,6 +1373,7 @@ static void update_matrices(Camera* cam);
 static void camera_fly_control(Camera* cam);
 static vec2 screen2ndc(float32 x, float32 y);
 static vec3 camera_ray(Camera cam, vec2 ndc);
+static Color get_pixel(Image image, uint32 x, uint32 y);
 static Image load_bitmap(char* filename);
 static bool key1(char c);
 static bool key2(int32 c);
@@ -1413,6 +1456,7 @@ static void accelerate(Entity* e, vec2 acc);
 static void thrust(Entity* e, vec2 dir);
 static void turn_to(Entity* e, vec2 target);
 static void fire_gun(Entity* e);
+static Entity* spawn_enemy(vec2 pos);
 static void update_entity(Entity* e);
 static void update_ai(Entity* e);
 static float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1);
@@ -2004,9 +2048,10 @@ static Chunk chunk_1;
 static Chunk chunk_2;
 static Chunk chunk_3;
 static Chunk chunk_4;
-static uint32 ships_index = 0;
 static char* num_str;
 static bool prev_state = 0;
+static uint32 ships_index = 0;
+static uint32 prev_bullets_count = 0;
 
 // Implementations
 static void apply_camera(Transform2D t) {
@@ -2022,14 +2067,18 @@ static void apply_transform2(Transform2D t, float32 depth) {
     glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
-static void apply_color_tint(Color color) {
-    apply_color(color_to_vec4(color));
-}
 static void apply_color(vec4 v) {
     glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
 }
 static void apply_entity_scale(vec2 scale) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
+}
+static void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color) {
+    apply_transform2(tr, depth);
+    apply_entity_scale(make_vec1((tex.width * tr.scale), (tex.height * tr.scale)));
+    apply_color(color);
+    bind2(tex);
+    draw_elements1(quad_db);
 }
 static vec2 get_mouse_world_coord(Transform2D cam_tr) {
     float32 x = ((((float32)mouse_x / main_window_width) * 2) - 1);
@@ -2051,12 +2100,73 @@ static float32 random_range(int32 seed, float32 min, float32 max) {
     return lerp1(((random(seed) + 1.000000) / 2.000000), min, max);
 }
 static void loadassets() {
-    spaceship = load_texture2D("sprite_sheet.bmp");
-    spaceship2 = load_texture2D("spaceship2.bmp");
-    spaceship_from_internet = load_texture2D("from_internet.bmp");
-    asteroid = load_texture2D("asteroid.bmp");
-    projectile = load_texture2D("proj.bmp");
-    particle = load_texture2D("particle.bmp");
+    spaceship = load_texture2D("assets/spaceship.bmp");
+    spaceship2 = load_texture2D("assets/spaceship2.bmp");
+    spaceship_from_internet = load_texture2D("assets/from_internet.bmp");
+    asteroid = load_texture2D("assets/asteroid.bmp");
+    projectile = load_texture2D("assets/proj.bmp");
+    particle = load_texture2D("assets/particle.bmp");
+    Spritesheet ss = load_spritesheet1("assets/spritesheet.bmp");
+    free(ss.image.pixels);
+}
+static bool point_in_region(Spritesheet_Boundingbox bb, int32 x, int32 y) {
+    return ((((x <= bb.max.x) && (x >= bb.min.x)) && (y <= bb.max.y)) && (y >= bb.min.y));
+}
+static void rec(Spritesheet_Boundingbox* bb, bool* map, Image image, uint32 x, uint32 y) {
+    if ((x >= image.width) || (y >= image.height)) return;
+    if (map[((y * image.width) + x)]) return;
+    if (get_pixel(image, x, y).a == 0) return;
+    map[((y * image.width) + x)] = 1;
+    bb->min = min2(bb->min, make_ivec1((int32)x, (int32)y));
+    bb->max = max2(bb->max, make_ivec1((int32)x, (int32)y));
+    rec(bb, map, image, (x + 1), y);
+    rec(bb, map, image, (x - 1), y);
+    rec(bb, map, image, x, (y + 1));
+    rec(bb, map, image, x, (y - 1));
+    /* local constant */;
+    if (1) {
+        rec(bb, map, image, (x + 1), (y + 1));
+        rec(bb, map, image, (x - 1), (y - 1));
+        rec(bb, map, image, (x - 1), (y + 1));
+        rec(bb, map, image, (x + 1), (y - 1));
+    }
+}
+static Spritesheet_Boundingbox flood_fill(Image image, uint32 x, uint32 y) {
+    bool* map = calloc(1, ((image.width * image.height) * sizeof(bool)));
+    Spritesheet_Boundingbox bb = (Spritesheet_Boundingbox) {.min = {image.width, image.height}, .max = {0, 0}};
+    /* local procedure */;
+    rec(&bb, map, image, x, y);
+    free(map);
+    return bb;
+}
+static Spritesheet load_spritesheet1(char* file_name) {
+    return load_spritesheet2(load_bitmap(file_name));
+}
+static Spritesheet load_spritesheet2(Image image) {
+    Spritesheet ss = (Spritesheet) {0};
+    ss.image = image;
+    ss.regions = list_create(sizeof(Spritesheet_Boundingbox));
+    for (uint32 y = 0; y < image.height; y++) {
+        for (uint32 x = 0; x < image.width; x++) {
+            Color pixel = get_pixel(image, x, y);
+            if (pixel.a == 0) continue;
+            for (int32 it = 0; it < list_length(ss.regions); it++) if (point_in_region(ss.regions[it], (int32)x, (int32)y)) {
+                x = (uint32)(ss.regions[it].max.x + 1);
+                goto next;
+            }
+            Spritesheet_Boundingbox bb = flood_fill(image, x, y);
+            list_add(&ss.regions, &bb);
+            x = (uint32)(bb.max.x + 1);
+            next:;
+        }
+    }
+    for (int32 it = 0; it < list_length(ss.regions); it++) {
+        Spritesheet_Boundingbox bb = ss.regions[it];
+        ivec2 size = sub4(bb.max, bb.min);
+        size = add4(size, (ivec2)(ivec2) {1, 1});
+        printf("%s{x = %d, y = %d}%s{x = %d, y = %d}%s", "pos = ", bb.min.x, bb.min.y, "\nsize = ", size.x, size.y, "\n");
+    }
+    return ss;
 }
 void __main() {
     grax_init();
@@ -2069,9 +2179,10 @@ void __main() {
         update_buffers1(&quad_db, verts, inds);
     }
     Entity* player = spawn_entity(&global_entity_pool, (vec2)(vec2) {0, 0}, spaceship2);
-    player->hp = 100;
+    player->hp = 200;
     player->team_id = 0;
-    set_clear_color2((Color)(Color) {0, 0, 0, 255});
+    player->texture.height *= 2;
+    set_clear_color2(rgba1(168430335));
     while (grax_loop()) {
         drawframe();
     }
@@ -2086,12 +2197,7 @@ static void drawframe() {
     apply_camera(camera);
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
     if (mouse_pressed(1)) {
-        // static decl;
-        Array ships = (Array) { .length = 3, .data = (Texture2D[]){spaceship, spaceship2, spaceship_from_internet}};
-        Entity* e = spawn_entity(&global_entity_pool, mouse_world_pos, ((Texture2D*)ships.data)[(ships_index++ % ships.length)]);
-        e->tr.rot = (random(global_seed++) * 3.141593);
-        e->team_id = 1;
-        e->behaviour = update_ai;
+        Entity* e = spawn_enemy(mouse_world_pos);
         e->vel = mul7(make_vec1((float32)(mouse_x - pmouse_x), (float32)-(mouse_y - pmouse_y)), 0.010000);
     }
     {
@@ -2099,11 +2205,14 @@ static void drawframe() {
         turn_to(player, mouse_world_pos);
         if (mouse(0)) fire_gun(player);
         if (entity_is_dead(*player)) {
-            player->hp = 100;
+            player->hp = 200;
             player->tr.pos = (vec2)(vec2) {0, 0};
         }
         /* local constant */;
-        draw_text1((vec2)(vec2) {-1, (1 - (0.100000 / 2))}, 0.100000, to_string1((uint64)player->hp), (Color)(Color) {255, 255, 255, 255});
+        vec2 pos = (vec2) {-1, (1 - (0.100000 / 2))};
+        pos = draw_text1(pos, 0.100000, to_string1((uint64)player->hp), (Color)(Color) {255, 255, 255, 255});
+        pos = draw_text2(pos, 0.100000, " / ", (Color)(Color) {255, 255, 255, 255});
+        pos = draw_text1(pos, 0.100000, to_string1(200), (Color)(Color) {255, 255, 255, 255});
     }
     update_entities();
 }
@@ -2884,8 +2993,8 @@ static uint32 lev(string a, string b) {
     if (b.length == 0) return a.length;
     if (a.chars[0] == b.chars[0]) return lev(tail(a), tail(b));
     uint32 i = lev(tail(a), b);
-    i = min2(i, lev(a, tail(b)));
-    i = min2(i, lev(tail(a), tail(b)));
+    i = min5(i, lev(a, tail(b)));
+    i = min5(i, lev(tail(a), tail(b)));
     return (i + 1);
 }
 static string to_string2(StringBuilder sb) {
@@ -3023,6 +3132,9 @@ static void grax_init() {
     {
         default3d_shader = load_shader1("../grax/shaders/default3d.glsl");
         default2d_shader = load_shader1("../grax/shaders/default2d.glsl");
+        gizmo_points_shader = load_shader1("../grax/shaders/gizmo_points3D.glsl");
+        immediate_text_batch.shader = load_shader1("../grax/shaders/ui.glsl");
+        immediate_text_batch.texture = load_texture2D("../grax/CascadiaMono.bmp");
     }
     {
         Color pixel = (Color) {255, 255, 255, 255};
@@ -3276,10 +3388,6 @@ static void init_immediate_renderer() {
     immediate_text_batch.vertices = list_create(sizeof(vertex2D));
     immediate_text_batch.indices = list_create(sizeof(uint32));
     immediate_text_batch.draw_buffers = create_draw_buffers2();
-    immediate_text_batch.shader = load_shader1("../grax/shaders/ui.glsl");
-    Image image = load_bitmap("../grax/CascadiaMono.bmp");
-    immediate_text_batch.texture = create_texture2D(image);
-    free(image.pixels);
 }
 static void dispatch_immediate() {
     uint32 vert_count = list_length(immediate_text_batch.vertices);
@@ -3300,7 +3408,7 @@ static void immediate_vertex1(float32 x, float32 y, float32 u, float32 v) {
     immediate_vertex2(x, y, u, v, (Color)(Color) {255, 255, 255, 255});
 }
 static void immediate_vertex2(float32 x, float32 y, float32 u, float32 v, Color color) {
-    vertex2D vert;
+    vertex2D vert = (vertex2D) {0};
     vert.pos = (vec2) {x, y};
     vert.uv = (vec2) {u, v};
     vert.color = color;
@@ -3418,14 +3526,56 @@ static float32 gnoise(float32 x, float32 y) {
 static int32 min1(int32 a, int32 b) {
     return (a < b) ? a : b;
 }
+static ivec2 min2(ivec2 a, ivec2 b) {
+    return (ivec2) {min6(a.x, b.x), min6(a.y, b.y)};
+}
+static ivec3 min3(ivec3 a, ivec3 b) {
+    return (ivec3) {min6(a.x, b.x), min6(a.y, b.y), min6(a.z, b.z)};
+}
+static ivec4 min4(ivec4 a, ivec4 b) {
+    return (ivec4) {min6(a.x, b.x), min6(a.y, b.y), min6(a.z, b.z), min6(a.w, b.w)};
+}
 static int32 max1(int32 a, int32 b) {
     return (a < b) ? b : a;
 }
-static uint32 min2(uint32 a, uint32 b) {
+static ivec2 max2(ivec2 a, ivec2 b) {
+    return (ivec2) {max6(a.x, b.x), max6(a.y, b.y)};
+}
+static ivec3 max3(ivec3 a, ivec3 b) {
+    return (ivec3) {max6(a.x, b.x), max6(a.y, b.y), max6(a.z, b.z)};
+}
+static ivec4 max4(ivec4 a, ivec4 b) {
+    return (ivec4) {max6(a.x, b.x), max6(a.y, b.y), max6(a.z, b.z), max6(a.w, b.w)};
+}
+static uint32 min5(uint32 a, uint32 b) {
     return (a < b) ? a : b;
 }
-static uint32 max2(uint32 a, uint32 b) {
+static uint32 max5(uint32 a, uint32 b) {
     return (a < b) ? b : a;
+}
+static float32 min6(float32 a, float32 b) {
+    return (a < b) ? a : b;
+}
+static vec2 min7(vec2 a, vec2 b) {
+    return (vec2) {min6(a.x, b.x), min6(a.y, b.y)};
+}
+static vec3 min8(vec3 a, vec3 b) {
+    return (vec3) {min6(a.x, b.x), min6(a.y, b.y), min6(a.z, b.z)};
+}
+static vec4 min9(vec4 a, vec4 b) {
+    return (vec4) {min6(a.x, b.x), min6(a.y, b.y), min6(a.z, b.z), min6(a.w, b.w)};
+}
+static float32 max6(float32 a, float32 b) {
+    return (a < b) ? b : a;
+}
+static vec2 max7(vec2 a, vec2 b) {
+    return (vec2) {max6(a.x, b.x), max6(a.y, b.y)};
+}
+static vec3 max8(vec3 a, vec3 b) {
+    return (vec3) {max6(a.x, b.x), max6(a.y, b.y), max6(a.z, b.z)};
+}
+static vec4 max9(vec4 a, vec4 b) {
+    return (vec4) {max6(a.x, b.x), max6(a.y, b.y), max6(a.z, b.z), max6(a.w, b.w)};
 }
 static int32 clamp1(int32 t, int32 min, int32 max) {
     return (t < min) ? min : (t > max) ? max : t;
@@ -3469,17 +3619,38 @@ static vec3 make_vec2(float32 x, float32 y, float32 z) {
 static vec4 make_vec3(float32 x, float32 y, float32 z, float32 w) {
     return (vec4) {x, y, z, w};
 }
+static ivec2 make_ivec1(int32 x, int32 y) {
+    return (ivec2) {x, y};
+}
+static ivec3 make_ivec2(int32 x, int32 y, int32 z) {
+    return (ivec3) {x, y, z};
+}
+static ivec4 make_ivec3(int32 x, int32 y, int32 z, int32 w) {
+    return (ivec4) {x, y, z, w};
+}
 static vec3 make_vec4(vec2 xy, float32 z) {
     return (vec3) {xy.x, xy.y, z};
 }
 static vec3 make_vec5(float32 x, vec2 yz) {
     return (vec3) {x, yz.x, yz.y};
 }
+static ivec3 make_ivec4(ivec2 xy, int32 z) {
+    return (ivec3) {xy.x, xy.y, z};
+}
+static ivec3 make_ivec5(int32 x, ivec2 yz) {
+    return (ivec3) {x, yz.x, yz.y};
+}
 static vec4 make_vec6(vec3 xyz, float32 w) {
     return (vec4) {xyz.x, xyz.y, xyz.z, w};
 }
 static vec4 make_vec7(float32 x, vec3 yzw) {
     return (vec4) {x, yzw.x, yzw.y, yzw.z};
+}
+static ivec4 make_ivec6(ivec3 xyz, int32 w) {
+    return (ivec4) {xyz.x, xyz.y, xyz.z, w};
+}
+static ivec4 make_ivec7(int32 x, ivec3 yzw) {
+    return (ivec4) {x, yzw.x, yzw.y, yzw.z};
 }
 static vec2 make_vec8(ivec2 v) {
     return (vec2) {(float32)v.x, (float32)v.y};
@@ -3490,13 +3661,13 @@ static vec3 make_vec9(ivec3 v) {
 static vec4 make_vec10(ivec4 v) {
     return (vec4) {(float32)v.x, (float32)v.y, (float32)v.z, (float32)v.w};
 }
-static ivec2 make_ivec1(vec2 v) {
+static ivec2 make_ivec8(vec2 v) {
     return (ivec2) {(int32)v.x, (int32)v.y};
 }
-static ivec3 make_ivec2(vec3 v) {
+static ivec3 make_ivec9(vec3 v) {
     return (ivec3) {(int32)v.x, (int32)v.y, (int32)v.z};
 }
-static ivec4 make_ivec3(vec4 v) {
+static ivec4 make_ivec10(vec4 v) {
     return (ivec4) {(int32)v.x, (int32)v.y, (int32)v.z, (int32)v.w};
 }
 static bool equals1(ivec2 a, ivec2 b) {
@@ -3678,6 +3849,24 @@ static float32 length2(vec3 a) {
 }
 static float32 length3(vec4 a) {
     return sqrtf(dot3(a, a));
+}
+static float32 dist1(vec2 a, vec2 b) {
+    return length1(sub1(a, b));
+}
+static float32 dist2(vec3 a, vec3 b) {
+    return length2(sub2(a, b));
+}
+static float32 dist3(vec4 a, vec4 b) {
+    return length3(sub3(a, b));
+}
+static float32 sqdist1(vec2 a, vec2 b) {
+    return sqlength1(sub1(a, b));
+}
+static float32 sqdist2(vec3 a, vec3 b) {
+    return sqlength2(sub2(a, b));
+}
+static float32 sqdist3(vec4 a, vec4 b) {
+    return sqlength3(sub3(a, b));
 }
 static vec2 xy1(vec3 a) {
     return (vec2) {a.x, a.y};
@@ -3998,6 +4187,9 @@ static vec3 camera_ray(Camera cam, vec2 ndc) {
     ray = add2(ray, mul8(xyz(col32(cam.view)), -cam.near_plane));
     return normalize2(ray);
 }
+static Color get_pixel(Image image, uint32 x, uint32 y) {
+    return image.pixels[((y * image.width) + x)];
+}
 static Image load_bitmap(char* filename) {
     typedef struct Header Header;
     struct Header {
@@ -4026,10 +4218,11 @@ static Image load_bitmap(char* filename) {
     void* data = (void*)(file_contents + head->data_offset);
     Color* color_table = (Color*)(file_contents + 54);
     printf("%s%s%s%u%s%hu%s%d%s%d%s", "[INFO]: Loading bitmap file \"", filename, "\" (", head->file_bytesize, " bytes) (", info->bits_per_pixel, " bpp) (", info->width, "x", info->height, " pixels)\n");
-    Image image;
+    Image image = (Image) {0};
     image.width = (uint32)info->width;
     image.height = (uint32)info->height;
-    image.pixels = malloc(((image.width * image.height) * sizeof(Color)));
+    uint32 num_pixels = (image.width * image.height);
+    image.pixels = malloc((num_pixels * sizeof(Color)));
     switch (info->bits_per_pixel) {
         case 1:;
         printf("%s%s%s", "[ERROR]: .bmp file \"", filename, "\" with 1 bits per pixel not implemented yet.\n");
@@ -4040,7 +4233,7 @@ static Image load_bitmap(char* filename) {
         case 8:;
         {
             uint8* bytes = data;
-            for (int32 i = 0; i < (info->width * info->height); i++) {
+            for (int32 i = 0; i < num_pixels; i++) {
                 image.pixels[i] = color_table[bytes[i]];
             }
         }
@@ -4051,7 +4244,7 @@ static Image load_bitmap(char* filename) {
         case 24:;
         {
             ColorRgb* colors = data;
-            for (int32 i = 0; i < (info->width * info->height); i++) {
+            for (int32 i = 0; i < num_pixels; i++) {
                 image.pixels[i].r = colors[i].b;
                 image.pixels[i].g = colors[i].g;
                 image.pixels[i].b = colors[i].r;
@@ -4062,11 +4255,11 @@ static Image load_bitmap(char* filename) {
         case 32:;
         {
             Color* colors = data;
-            for (int32 i = 0; i < (info->width * info->height); i++) {
-                image.pixels[i] = colors[i];
-                uint8 red = image.pixels[i].r;
-                image.pixels[i].r = image.pixels[i].b;
-                image.pixels[i].b = red;
+            for (int32 i = 0; i < num_pixels; i++) {
+                image.pixels[i].r = colors[i].b;
+                image.pixels[i].g = colors[i].g;
+                image.pixels[i].b = colors[i].r;
+                image.pixels[i].a = colors[i].a;
             }
         }
         break;
@@ -4278,7 +4471,6 @@ static void gizmo_setup() {
         glBindVertexArray(0);
         glBindBuffer(34962, 0);
     }
-    gizmo_points_shader = load_shader1("../grax/shaders/gizmo_points3D.glsl");
     glEnable(34370);
 }
 static void gizmo_dispatch() {
@@ -4752,7 +4944,7 @@ static void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
     list_add(&particles, &p);
 }
 static void spawn_explosion(uint32 size, vec2 pos, vec2 vel, float32 spread) {
-    for (int32 it = 0; it < ((40 * size) * size); it++) {
+    for (int32 it = 0; it < size; it++) {
         vec2 r = random_unit_vec22(spread);
         spawn_particle(pos, add1(vel, r), particle);
     }
@@ -4765,15 +4957,11 @@ static void draw_particles() {
         p->pos = add1(p->pos, mul7(p->vel, dt));
         p->vel = mul7(p->vel, random_range(it, 0.960000, 1));
         p->life_time -= dt;
-        bind2(p->tex);
-        Transform2D tr = (Transform2D) {p->pos, p->rot, 1};
-        apply_transform2(tr, 0);
-        vec2 scale = (vec2) {p->tex.width, p->tex.height};
-        apply_entity_scale(mul7(scale, (1.000000 / 16.000000)));
         /* local constant */;
         /* local constant */;
-        apply_color(make_vec6(lerp3(p->life_time, (vec3)(vec3) {(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3)(vec3) {1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time));
-        draw_elements1(quad_db);
+        vec4 color = make_vec6(lerp3(p->life_time, (vec3)(vec3) {(64.000000 / 255.000000), (64.000000 / 255.000000), (64.000000 / 255.000000)}, (vec3)(vec3) {1, (173.000000 / 255.000000), (10.000000 / 255.000000)}), p->life_time);
+        Transform2D tr = (Transform2D) {p->pos, p->rot, (1.000000 / 16.000000)};
+        draw_texture(tr, 0, p->tex, color);
         if (p->life_time < 0) list_unordered_remove(particles, (uint32)it);
     }
 }
@@ -4788,10 +4976,10 @@ static Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
     *e = (Entity) {0};
     e->tr.pos = pos;
     e->tr.rot = 0;
-    e->tr.scale = ((float32)tex.width / 16.000000);
+    e->tr.scale = (1.000000 / 16.000000);
     e->depth = 0;
     e->hp = 8;
-    e->tex_handle = tex.gl_handle;
+    e->texture = tex;
     return e;
 }
 static void accelerate(Entity* e, vec2 acc) {
@@ -4801,14 +4989,14 @@ static void thrust(Entity* e, vec2 dir) {
     /* local constant */;
     dir.x *= 0.500000;
     if (dir.y < 0) dir.y *= 0.500000;
-    dir = mul7(dir, 10);
+    dir = mul7(dir, 5);
     accelerate(e, rotate_vec(dir, e->tr.rot));
 }
 static void turn_to(Entity* e, vec2 target) {
     vec2 diff = sub1(target, e->tr.pos);
     diff = rotate_vec(diff, -e->tr.rot);
     float32 angle = vec2_to_angle(diff);
-    e->ang_vel = (angle * 10);
+    e->ang_vel = (angle * 3);
 }
 static void fire_gun(Entity* e) {
     if (e->gun_recharge <= 0) {
@@ -4818,8 +5006,17 @@ static void fire_gun(Entity* e) {
         /* local constant */;
         v = add1(v, random_unit_vec22(3));
         spawn_bullet(add1(e->tr.pos, disp), v, e->team_id);
-        e->gun_recharge = 0.100000;
+        e->gun_recharge = 0.250000;
     }
+}
+static Entity* spawn_enemy(vec2 pos) {
+    // static decl;
+    Array ships = (Array) { .length = 3, .data = (Texture2D[]){spaceship, spaceship2, spaceship_from_internet}};
+    Entity* e = spawn_entity(&global_entity_pool, pos, ((Texture2D*)ships.data)[(ships_index++ % ships.length)]);
+    e->tr.rot = (random(global_seed++) * 3.141593);
+    e->team_id = 1;
+    e->behaviour = update_ai;
+    return e;
 }
 static void update_entity(Entity* e) {
     e->tr.pos = add1(e->tr.pos, mul7(e->vel, (float32)deltatime));
@@ -4830,22 +5027,20 @@ static void update_entity(Entity* e) {
     for (int32 it = 0; it < list_length(bullets); it++) {
         Bullet p = bullets[it];
         if (p.team_id == e->team_id) continue;
-        float32 intersection = circle_intersects(e->tr.pos, (e->tr.scale / 2), p.pos, 0.300000);
+        float32 intersection = circle_intersects(e->tr.pos, ((e->texture.width * e->tr.scale) / 2), p.pos, 0.300000);
         if (intersection < 0) {
             color = (vec4) {100, 100, 100, 0};
             e->hp--;
             e->vel = add1(e->vel, mul7(p.vel, 0.004000));
             list_unordered_remove(bullets, (uint32)it);
+            it--;
             if (e->hp == 0) {
-                spawn_explosion(e->tr.scale, e->tr.pos, e->vel, 7);
+                spawn_explosion((e->texture.width + e->texture.height), e->tr.pos, e->vel, 7);
                 break;
             }
         }
     }
-    apply_transform2(e->tr, e->depth);
-    apply_color(color);
-    glBindTexture(3553, e->tex_handle);
-    draw_elements1(quad_db);
+    draw_texture(e->tr, e->depth, e->texture, color);
     if (e->behaviour) e->behaviour(e);
 }
 static void update_ai(Entity* e) {
@@ -4909,15 +5104,25 @@ static void update_entities() {
     update_entity_list(chunk_3.entities);
     update_entity_list(chunk_4.entities);
     bind2(projectile);
-    uint32 bullets_count = list_length(bullets);
-    for (int32 it = 0; it < bullets_count; it++) {
+    for (int32 it = 0; it < list_length(bullets); it++) {
         Bullet* p = &bullets[it];
+        /* local constant */;
+        if (sqdist1(get_player()->tr.pos, p->pos) > (400 * 400)) {
+            list_unordered_remove(bullets, (uint32)it);
+            it--;
+            continue;
+        }
         Transform2D tr = (Transform2D) {p->pos, vec2_to_angle(p->vel), 0.100000};
         apply_transform1(tr);
         vec2 particle_scale = (vec2) {0.250000, 1};
         apply_entity_scale(particle_scale);
         draw_elements1(quad_db);
         p->pos = add1(p->pos, mul7(p->vel, (float32)deltatime));
+    }
+    // static decl;
+    uint32 bullets_count = list_length(bullets);
+    if (bullets_count != prev_bullets_count) {
+        prev_bullets_count = bullets_count;
     }
     disable_depth_test();
     draw_particles();
@@ -4926,7 +5131,7 @@ static void draw_background(vec2 center) {
     /* local constant */;
     /* local constant */;
     for (int32 x = -10; x < (10 + 1); x++) for (int32 y = -10; y < (10 + 1); y++) {
-        ivec2 p_seed = make_ivec1(round2multiple2(center, 10));
+        ivec2 p_seed = make_ivec8(round2multiple2(center, 10));
         p_seed.x += (x * 10);
         p_seed.y += (y * 10);
         int32 seed = (p_seed.x + (p_seed.y * 100));
@@ -4942,7 +5147,7 @@ static void draw_background(vec2 center) {
     }
 }
 static ivec2 get_chunk_coord(vec2 pos) {
-    return make_ivec1(mul7(round2multiple2(pos, 10), (1.000000 / 10)));
+    return make_ivec8(mul7(round2multiple2(pos, 100), (1.000000 / 100)));
 }
 static Chunk init_chunk() {
     Chunk s = (Chunk) {0};
@@ -4956,14 +5161,19 @@ static void spawn_chunk(Chunk* chunk, ivec2 coord) {
     int32 seed = ((coord.x & 65535) | ((coord.y << 16) & 4294901760));
     printf("%s{x = %d, y = %d}%s%d%s", "spawn chunk ", coord.x, coord.y, " with seed: ", seed, "\n");
     /* local constant */;
-    vec2 chunk_pos = make_vec8(sub4(mul10(coord, 10), (ivec2)(ivec2) {(10 / 2), (10 / 2)}));
-    for (int32 it = 0; it < 5; it++) {
-        /* local constant */;
-        vec2 pos = (vec2) {(random(seed++) * (10 / 2)), (random(seed++) * (10 / 2))};
+    vec2 chunk_pos = make_vec8(sub4(mul10(coord, 100), (ivec2)(ivec2) {(100 / 2), (100 / 2)}));
+    /* local constant */;
+    for (int32 it = 0; it < ((0.010000 * 100) * 100); it++) {
+        vec2 pos = (vec2) {(random(seed++) * (100 / 2)), (random(seed++) * (100 / 2))};
         Entity* e = spawn_entity(&chunk->entities, add1(pos, chunk_pos), asteroid);
+        e->tr.rot = (random(seed++) * 3.141593);
         e->team_id = 2;
         e->hp = 10;
         e->depth = 0.010000;
+    }
+    if (random(global_seed++) < 0) {
+        vec2 pos = (vec2) {(random(seed++) * (100 / 2)), (random(seed++) * (100 / 2))};
+        spawn_enemy(add1(pos, chunk_pos));
     }
 }
 static void drop_cargo(Entity* en, Cargo* cargo) {

@@ -21,6 +21,8 @@ const linear_drag = 0.99;
 Entity* global_entity_pool = list_create(sizeof Entity);
 Entity* get_player() { return *global_entity_pool[0]; }
 
+const player_max_hp = 200;
+
 Bullet* bullets = list_create(sizeof Bullet);
 Particle* particles = list_create(sizeof Particle);
 
@@ -30,10 +32,13 @@ struct Entity {
 
     with Transform2D tr;
     float32 depth;
+
+    Texture2D texture;
+
     vec2 vel;
     float32 ang_vel;
+
     uint32 hp;
-    uint32 tex_handle;
     uint32 team_id;
     float32 gun_recharge;
 }
@@ -69,7 +74,7 @@ void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
 }
 
 void spawn_explosion(uint32 size, vec2 pos, vel, float32 spread) {
-    for 0 .. 40 * size * size {
+    for 0 .. size {
         vec2 r = random_unit_vec2(spread);
         spawn_particle(pos, add(vel, r), particle);
     }
@@ -84,15 +89,11 @@ void draw_particles() {
         p.vel = mul(p.vel, random_range(it, 0.96, 1));
         p.life_time -= dt;
 
-        bind(p.tex);
-        Transform2D tr = {p.pos, p.rot, 1};
-        apply_transform(tr, 0);
-        vec2 scale = { p.tex.width, p.tex.height };
-        apply_entity_scale(mul(scale, 1.0 / 16.0));
         const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
         const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
-        apply_color(make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time));
-        draw_elements(quad_db);
+        vec4 color = make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time);
+        Transform2D tr = {p.pos, p.rot, 1.0 / 16.0};
+        draw_texture(tr, 0, p.tex, color);
 
         if p.life_time < 0  list_unordered_remove(particles, it as uint32); // TODO: fix this remove in iterator
     }
@@ -107,10 +108,10 @@ Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
     @e = {};
     e.tr.pos = pos;
     e.tr.rot = 0;
-    e.tr.scale = tex.width as float32 / 16.0;
+    e.tr.scale = 1.0 / 16.0;
     e.depth = 0;
     e.hp = 8;
-    e.tex_handle = tex.gl_handle;
+    e.texture = tex;
 
     return e;
 }
@@ -126,7 +127,7 @@ void thrust(Entity* e, vec2 dir) {
     dir.x *= non_forward_factor;
     if dir.y < 0  dir.y *= non_forward_factor;
 
-    dir = mul(dir, 10);
+    dir = mul(dir, 5);
 
     accelerate(e, rotate_vec(dir, e.tr.rot));
 }
@@ -136,7 +137,7 @@ void turn_to(Entity* e, vec2 target) {
     diff = rotate_vec(diff, -e.tr.rot);
     float32 angle = vec2_to_angle(diff);
 
-    e.ang_vel = angle * 10;
+    e.ang_vel = angle * 3;
 }
 
 void fire_gun(Entity* e) {
@@ -147,8 +148,23 @@ void fire_gun(Entity* e) {
         const spread = 3;
         v = add(v, random_unit_vec2(spread));
         spawn_bullet(add(e.tr.pos, disp), v, e.team_id);
-        e.gun_recharge = 0.1;
+        e.gun_recharge = 0.25;
     }
+}
+
+Entity* spawn_enemy(vec2 pos) {
+    static uint32 ships_index = 0;
+    Texture2D[] ships = {
+        spaceship,
+        spaceship2,
+        spaceship_from_internet
+    };
+
+    let e = spawn_entity(*global_entity_pool, pos, ships[ships_index++ % ships.length]);
+    e.tr.rot = random(global_seed++) * Pi;
+    e.team_id = 1;
+    e.behaviour = update_ai;
+    return e;
 }
 
 void update_entity(Entity* e) {
@@ -165,24 +181,22 @@ void update_entity(Entity* e) {
         let p = bullets[it];
         if p.team_id == e.team_id continue;
 
-        float32 intersection = circle_intersects(e.tr.pos, e.tr.scale / 2, p.pos, 0.3);
+        float32 intersection = circle_intersects(e.tr.pos, e.texture.width * e.tr.scale / 2, p.pos, 0.3);
         if intersection < 0 {
             color = {100, 100, 100, 0};
             e.hp--;
             e.vel = add(e.vel, mul(p.vel, 0.004));
             list_unordered_remove(bullets, it as uint32);
+            it--;
 
             if e.hp == 0 {
-                spawn_explosion(e.tr.scale, e.tr.pos, e.vel, 7);
+                spawn_explosion(e.texture.width + e.texture.height, e.tr.pos, e.vel, 7);
                 break;
             }
         }
     }
 
-    apply_transform(e.tr, e.depth);
-    apply_color(color);
-    glBindTexture(GL_TEXTURE_2D, e.tex_handle);
-    draw_elements(quad_db);
+    draw_texture(e.tr, e.depth, e.texture, color);
 
     if e.behaviour  e.behaviour(e);
 }
@@ -259,10 +273,15 @@ void update_entities() {
 
 
     bind(projectile);
-    uint32 bullets_count = list_length(bullets);
-    for 0 .. bullets_count {
+    for 0 .. list_length(bullets) {
         let p = *bullets[it];
 
+        const despawn_radius = 400;
+        if sqdist(get_player().tr.pos, p.pos) > (despawn_radius*despawn_radius) {
+            list_unordered_remove(bullets, it as uint32);
+            it--;
+            continue;
+        }
 
         Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
         apply_transform(tr);
@@ -272,6 +291,14 @@ void update_entities() {
         draw_elements(quad_db);
 
         p.pos = add(p.pos, mul(p.vel, deltatime as float32));
+    }
+
+
+    static uint32 prev_bullets_count = 0;
+    uint32 bullets_count = list_length(bullets);
+    if bullets_count != prev_bullets_count {
+        // print("Bullets: ", bullets_count, "\n");
+        prev_bullets_count = bullets_count;
     }
 
 
@@ -301,7 +328,7 @@ void draw_background(vec2 center) {
     }
 }
 
-const chunk_size = 10;
+const chunk_size = 100;
 
 Chunk chunk_1 = init_chunk();
 Chunk chunk_2 = init_chunk();
@@ -337,13 +364,21 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     const half = chunk_size / 2;
     vec2 chunk_pos = make_vec(sub(mul(coord, chunk_size), { half, half } as ivec2));
 
+    const asteroids_per_square_meter = 0.01;
+
     // init interactable asteroids
-    for 0 .. 5 {
-        const d = chunk_size / 2;
-        vec2 pos = { random(seed++) * d, random(seed++) * d };
+    for 0 .. asteroids_per_square_meter * chunk_size * chunk_size {
+        vec2 pos = { random(seed++) * half, random(seed++) * half };
         let e = spawn_entity(*chunk.entities, add(pos, chunk_pos), asteroid);
+        e.tr.rot = random(seed++) * Pi;
         e.team_id = 2;
         e.hp = 10;
         e.depth = 0.01;
+    }
+
+
+    if random(global_seed++) < 0 {
+        vec2 pos = { random(seed++) * half, random(seed++) * half };
+        spawn_enemy(add(pos, chunk_pos));
     }
 }

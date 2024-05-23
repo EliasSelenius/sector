@@ -7,18 +7,19 @@ include "inventory.pog";
 // ..\plang\bin\plang.exe main.pog cflags -lglfw3dll
 
 /*
-    A civilication florishing in an asteroid field with abundant riches, and yet conflict is prevalent
+    Civilization is flourishing in an asteroid field of abundant riches, and yet conflict is prevalent
 */
 
 /* TODOs:
     - thrusters effect
     - sub-particle trail for explosions
-    - enemy spawn
     - cargo inventory
         - asteroids drop minerals
         - ships drop cargo hold
+
+    - we probably need transparancy sorting because how else do we do alpha blending with transparent objects/particles/dustclouds
 Priority:
-    - infinite asteroid generation
+    - asteroids break into smaller asteroids
 
 */
 
@@ -35,16 +36,20 @@ void apply_transform(Transform2D t, float32 depth) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
 }
 
-void apply_color_tint(Color color) {
-    apply_color(color_to_vec4(color));
-}
-
 void apply_color(vec4 v) {
     glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
 }
 
 void apply_entity_scale(vec2 scale) {
     glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
+}
+
+void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color) {
+    apply_transform(tr, depth);
+    apply_entity_scale(make_vec(tex.width * tr.scale, tex.height * tr.scale));
+    apply_color(color);
+    bind(tex);
+    draw_elements(quad_db);
 }
 
 vec2 get_mouse_world_coord(Transform2D cam_tr) {
@@ -87,12 +92,106 @@ Texture2D projectile;
 Texture2D particle;
 
 void loadassets() {
-    spaceship = load_texture2D("sprite_sheet.bmp");
-    spaceship2 = load_texture2D("spaceship2.bmp");
-    spaceship_from_internet = load_texture2D("from_internet.bmp");
-    asteroid = load_texture2D("asteroid.bmp");
-    projectile = load_texture2D("proj.bmp");
-    particle = load_texture2D("particle.bmp");
+    spaceship               = load_texture2D("assets/spaceship.bmp");
+    spaceship2              = load_texture2D("assets/spaceship2.bmp");
+    spaceship_from_internet = load_texture2D("assets/from_internet.bmp");
+    asteroid                = load_texture2D("assets/asteroid.bmp");
+    projectile              = load_texture2D("assets/proj.bmp");
+    particle                = load_texture2D("assets/particle.bmp");
+
+
+    let ss = load_spritesheet("assets/spritesheet.bmp");
+    free(ss.image.pixels);
+}
+
+struct Spritesheet_Boundingbox {
+    ivec2 min, max;
+}
+
+bool point_in_region(Spritesheet_Boundingbox bb, int32 x, y) {
+    return x <= bb.max.x and x >= bb.min.x
+       and y <= bb.max.y and y >= bb.min.y;
+}
+
+struct Spritesheet {
+    Spritesheet_Boundingbox* regions; // list
+    Image image;
+}
+
+
+Spritesheet_Boundingbox flood_fill(Image image, uint32 x, y) {
+    bool* map = calloc(1, image.width * image.height * sizeof bool);
+
+    Spritesheet_Boundingbox bb = {
+        min = {image.width, image.height},
+        max = {0, 0}
+    };
+
+    void rec(Spritesheet_Boundingbox* bb, bool* map, Image image, uint32 x, y) {
+        if x >= image.width or y >= image.height  return;
+
+        if map[y * image.width + x]       return;
+        if get_pixel(image, x, y).a == 0  return;
+
+        map[y * image.width + x] = true;
+
+        bb.min = min(bb.min, make_ivec(x as int32, y as int32));
+        bb.max = max(bb.max, make_ivec(x as int32, y as int32));
+
+        rec(bb, map, image, x + 1, y);
+        rec(bb, map, image, x - 1, y);
+        rec(bb, map, image, x, y + 1);
+        rec(bb, map, image, x, y - 1);
+
+        const eight_way = true;
+        if eight_way {
+            rec(bb, map, image, x + 1, y + 1);
+            rec(bb, map, image, x - 1, y - 1);
+            rec(bb, map, image, x - 1, y + 1);
+            rec(bb, map, image, x + 1, y - 1);
+        }
+    }
+
+    rec(*bb, map, image, x, y);
+    free(map);
+    return bb;
+}
+
+Spritesheet load_spritesheet(char* file_name) {
+    return load_spritesheet(load_bitmap(file_name));
+}
+
+Spritesheet load_spritesheet(Image image) {
+    Spritesheet ss = {};
+    ss.image = image;
+    ss.regions = list_create(sizeof Spritesheet_Boundingbox);
+
+    for uint32 y : 0 .. image.height {
+        for uint32 x : 0 .. image.width {
+            Color pixel = get_pixel(image, x, y);
+            if pixel.a == 0  continue;
+
+            for 0 .. list_length(ss.regions) if point_in_region(ss.regions[it], x as int32, y as int32) {
+                x = (ss.regions[it].max.x + 1) as uint32; // skip pixels we know are in the region
+                goto next;
+            }
+
+            let bb = flood_fill(image, x, y);
+            list_add(*ss.regions, *bb);
+            x = (bb.max.x + 1) as uint32; // skip pixels we know are in the region
+            next:
+        }
+    }
+
+    for 0 .. list_length(ss.regions) {
+        let bb = ss.regions[it];
+
+        ivec2 size = sub(bb.max, bb.min);
+        size = add(size, ivec2_one);
+        print("pos = ", bb.min, "\nsize = ", size, "\n");
+    }
+
+    return ss;
 }
 
 
@@ -134,10 +233,10 @@ void main() {
     }
 
     let player = spawn_entity(*global_entity_pool, vec2_zero, spaceship2);
-    player.hp = 100;
+    player.hp = player_max_hp;
     player.team_id = 0;
 
-    set_clear_color(Black);
+    set_clear_color(rgba(0x0a0a0aff));
 
     while grax_loop() {
         drawframe();
@@ -160,16 +259,7 @@ void drawframe() {
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
 
     if mouse_pressed(Right_Mouse) {
-        static uint32 ships_index = 0;
-        Texture2D[] ships = {
-            spaceship,
-            spaceship2,
-            spaceship_from_internet
-        };
-        let e = spawn_entity(*global_entity_pool, mouse_world_pos, ships[ships_index++ % ships.length]);
-        e.tr.rot = random(global_seed++) * Pi;
-        e.team_id = 1;
-        e.behaviour = update_ai;
+        let e = spawn_enemy(mouse_world_pos);
         e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
     }
 
@@ -180,12 +270,15 @@ void drawframe() {
         turn_to(player, mouse_world_pos);
         if mouse(Left_Mouse) fire_gun(player);
         if entity_is_dead(@player) {
-            player.hp = 100;
+            player.hp = player_max_hp;
             player.tr.pos = vec2_zero;
         }
 
         const font_size = 0.1;
-        draw_text({-1, 1 - font_size / 2} as vec2, font_size, to_string(player.hp as uint64), White);
+        vec2 pos = {-1, 1 - font_size / 2};
+        pos = draw_text(pos, font_size, to_string(player.hp as uint64), White);
+        pos = draw_text(pos, font_size, " / ", White);
+        pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     }
 
     update_entities();
