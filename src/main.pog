@@ -78,12 +78,11 @@ vec2 get_mouse_world_coord(Transform2D cam_tr) {
 int32 global_seed = 0;
 
 vec2 random_unit_vec2() {
-    // return normalize(make_vec(random(global_seed++), random(global_seed++)));
     float32 a = random(global_seed++) * Pi;
     return { cosf(a), sinf(a) };
 }
-vec2 random_unit_vec2(float32 max_len) {
-    return mul(random_unit_vec2(), max_len * (random(global_seed++) + 1.0) / 2.0);
+vec2 random_vec2(float32 max_len) {
+    return mul(random_unit_vec2(), max_len * random01());
 }
 
 float32 random01() { return (random(global_seed++) + 1.0) / 2.0; }
@@ -282,7 +281,7 @@ void drawframe() {
 
     let player = get_player();
 
-    camera.pos = lerp(0.1, camera.pos, player.tr.pos);
+    camera.pos = lerp(0.1, camera.pos, player.tr.pos); // exponential decay?
     camera.scale = 10 + length(player.vel) / 10;
     apply_camera(camera);
 
@@ -290,9 +289,11 @@ void drawframe() {
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
 
     if mouse_pressed(Right_Mouse) {
-        let e = spawn_entity(*global_entity_pool, mouse_world_pos, spritesheet);
+        // let e = spawn_entity(*global_entity_pool, mouse_world_pos, spritesheet);
         // let e = spawn_enemy(mouse_world_pos);
-        e.vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+        let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+
+        spawn_explosion(64, mouse_world_pos, vel, 7);
     }
 
 
@@ -313,5 +314,5 @@ void drawframe() {
         pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     }
 
-    update_entities();
+    update_world();
 }

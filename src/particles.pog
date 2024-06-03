@@ -14,38 +14,98 @@ Particle* particles = list_create(sizeof Particle);
 Particle* sub_particles = list_create(sizeof Particle);
 
 
-void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
+void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, particle);
+void spawn_particle(vec2 pos, vel, Texture2D tex) {
     Particle p = {};
     p.pos = pos;
     p.vel = vel;
     p.rot = random(global_seed++) * Pi;
+    p.size = random_range(global_seed++, 0.5, 2);
     p.tex = tex;
-    p.life_time = random01() * 2.5;
+    p.life_time = random_range(global_seed++, 0.5, 3.0);
     list_add(*particles, *p);
 }
 
+void spawn_sub_particle(Particle* part) {
+    Particle p = {};
+    p.pos = part.pos;
+    p.vel = vec2_zero;
+    p.rot = random(global_seed++) * Pi;
+    p.size = part.size * 0.90;
+    p.tex = part.tex;
+    p.life_time = part.life_time * 0.5;
+    list_add(*sub_particles, *p);
+}
+
+vec2 shock_wave_force(vec2 shock_pos, obj_pos, float32 shock_pressure) {
+    let diff = sub(obj_pos, shock_pos);
+    let radius = length(diff);
+    let unit_dir = mul(diff, 1.0 / radius);
+    let circumference = Tau * radius;
+    let force = shock_pressure / circumference;
+    return mul(unit_dir, force);
+}
+
 void spawn_explosion(uint32 size, vec2 pos, vel, float32 spread) {
+
+    for 0 .. list_length(particles) {
+        let p = *particles[it];
+        let force = shock_wave_force(pos, p.pos, spread * 10);
+        p.vel = add(p.vel, mul(force, 1.0 / p.size));
+    }
+
+    for 0 .. list_length(sub_particles) {
+        let p = *sub_particles[it];
+        let force = shock_wave_force(pos, p.pos, spread * 10);
+        p.vel = add(p.vel, mul(force, 1.0 / p.size));
+    }
+
     for 0 .. size {
-        vec2 r = random_unit_vec2(spread);
+        vec2 r = random_vec2(spread);
         spawn_particle(pos, add(vel, r), particle);
     }
 }
 
-void draw_particles() {
-    let dt = deltatime();
-    let count = list_length(particles);
-    for 0 .. count {
-        let p = *particles[it];
-        p.pos = add(p.pos, mul(p.vel, dt));
-        p.vel = mul(p.vel, random_range(it, 0.96, 1)); // TODO: this is kinda dumb!
-        p.life_time -= dt;
+void update_particles() {
+    disable_depth_test();
 
-        const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
-        const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
-        vec4 color = make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time);
-        Transform2D tr = {p.pos, p.rot, 1.0 / 16.0};
-        draw_texture(tr, 0, p.tex, color);
+    void process_particle_pool(Particle* parts, vec3 start_color, end_color, bool has_sub_emitter) {
+        let dt = deltatime();
+        let count = list_length(parts);
+        for uint32 i : 0 .. count {
+            let p = *parts[i];
+            p.pos = add(p.pos, mul(p.vel, dt));
+            p.vel = mul(p.vel, 0.99);
+            p.size *= 0.99;
+            p.life_time -= dt;
 
-        if p.life_time < 0  list_unordered_remove(particles, it as uint32); // TODO: fix this remove in iterator
+
+            vec4 color = make_vec(lerp(p.life_time, end_color, start_color), p.life_time);
+            Transform2D tr = {
+                pos = p.pos,
+                rot = p.rot,
+                scale = p.size / 16.0
+            };
+            draw_texture(tr, 0, p.tex, color);
+
+            if has_sub_emitter {
+                spawn_sub_particle(p);
+            }
+
+            if p.life_time < 0 {
+                list_unordered_remove(parts, i);
+                i--;
+                count--;
+            }
+        }
     }
+
+    const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
+    const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
+
+    static uint32 frame_count = 0;
+    bool sub = (frame_count++ % 5) == 0;
+
+    process_particle_pool(sub_particles, smoke_color, smoke_color, false);
+    process_particle_pool(particles, fire_color, smoke_color, sub);
 }

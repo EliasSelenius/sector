@@ -81,14 +81,17 @@ void accelerate(Entity* e, vec2 acc) {
 
 // note: |dir.x| <= 1 and |dir.y| <= 1
 void thrust(Entity* e, vec2 dir) {
-    const non_forward_factor = 0.5;
+    if dir.x == 0.0 and dir.y == 0.0 return;
 
+    const non_forward_factor = 0.5;
     dir.x *= non_forward_factor;
     if dir.y < 0  dir.y *= non_forward_factor;
 
     dir = mul(dir, 5);
 
-    accelerate(e, rotate_vec(dir, e.tr.rot));
+    let acc = rotate_vec(dir, e.tr.rot);
+    accelerate(e, acc);
+    spawn_particle(e.tr.pos, add(e.vel, neg(acc)));
 }
 
 void turn_to(Entity* e, vec2 target) {
@@ -179,38 +182,36 @@ float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
 }
 
 
-void update_entities() {
+void update_world() {
 
     draw_background(camera.pos);
 
-    ivec2 chunk_coord = get_chunk_coord(get_player().tr.pos);
+    {
+        ivec2 chunk_coord = get_chunk_coord(get_player().tr.pos);
 
-    const bot_left = 0;
-    const bot_right = 1;
-    const top_left = 2;
-    const top_right = 3;
-    ivec2[] chunk_coord_offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
-    Chunk*[] chunks = {*chunk_1, *chunk_2, *chunk_3, *chunk_4};
-    int32 coord_index = 0;
-    ivec2[] coords = {{},{},{},{}};
+        ivec2[] chunk_coord_offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
+        Chunk*[] chunks = {*chunk_1, *chunk_2, *chunk_3, *chunk_4};
+        int32 coord_index = 0;
+        ivec2[] coords = {{},{},{},{}};
 
-    for it : 0 .. 4 {
-        ivec2 coord = add(chunk_coord, chunk_coord_offsets[it]);
+        for it : 0 .. 4 {
+            ivec2 coord = add(chunk_coord, chunk_coord_offsets[it]);
 
-        if      equals(coord, chunk_1.coord) { chunks[0] = null; continue; }
-        else if equals(coord, chunk_2.coord) { chunks[1] = null; continue; }
-        else if equals(coord, chunk_3.coord) { chunks[2] = null; continue; }
-        else if equals(coord, chunk_4.coord) { chunks[3] = null; continue; }
-        else {
-            coords[coord_index++] = coord;
+            if      equals(coord, chunk_1.coord) { chunks[0] = null; continue; }
+            else if equals(coord, chunk_2.coord) { chunks[1] = null; continue; }
+            else if equals(coord, chunk_3.coord) { chunks[2] = null; continue; }
+            else if equals(coord, chunk_4.coord) { chunks[3] = null; continue; }
+            else {
+                coords[coord_index++] = coord;
+            }
         }
-    }
 
-    coord_index = 0;
-    for 0 .. chunks.length {
-        if chunks[it] == null  continue;
+        coord_index = 0;
+        for 0 .. chunks.length {
+            if chunks[it] == null  continue;
 
-        spawn_chunk(chunks[it], coords[coord_index++]);
+            spawn_chunk(chunks[it], coords[coord_index++]);
+        }
     }
 
 
@@ -228,7 +229,6 @@ void update_entities() {
     update_entity_list(chunk_2.entities);
     update_entity_list(chunk_3.entities);
     update_entity_list(chunk_4.entities);
-
 
 
     bind(projectile);
@@ -261,8 +261,8 @@ void update_entities() {
     }
 
 
-    disable_depth_test();
-    draw_particles();
+    update_particles();
+
 }
 
 void draw_background(vec2 center) {
