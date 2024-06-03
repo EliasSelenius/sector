@@ -24,7 +24,6 @@ Entity* get_player() { return *global_entity_pool[0]; }
 const player_max_hp = 200;
 
 Bullet* bullets = list_create(sizeof Bullet);
-Particle* particles = list_create(sizeof Particle);
 
 
 struct Entity {
@@ -43,61 +42,21 @@ struct Entity {
     float32 gun_recharge;
 }
 
+// struct Asteroid {
+
+// }
+
 struct Bullet {
     vec2 pos;
     vec2 vel;
     uint32 team_id;
 }
 
-struct Particle {
-    vec2 pos;
-    float32 rot;
-    vec2 vel;
-    Texture2D tex;
-    float32 life_time;
-}
-
-
 void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
     Bullet p = {pos, vel, team_id};
     list_add(*bullets, *p);
 }
 
-void spawn_particle(vec2 pos, vec2 vel, Texture2D tex) {
-    Particle p = {};
-    p.pos = pos;
-    p.vel = vel;
-    p.rot = random(global_seed++) * Pi;
-    p.tex = tex;
-    p.life_time = random01() * 2.5;
-    list_add(*particles, *p);
-}
-
-void spawn_explosion(uint32 size, vec2 pos, vel, float32 spread) {
-    for 0 .. size {
-        vec2 r = random_unit_vec2(spread);
-        spawn_particle(pos, add(vel, r), particle);
-    }
-}
-
-void draw_particles() {
-    let dt = deltatime as float32;
-    let count = list_length(particles);
-    for 0 .. count {
-        let p = *particles[it];
-        p.pos = add(p.pos, mul(p.vel, dt));
-        p.vel = mul(p.vel, random_range(it, 0.96, 1));
-        p.life_time -= dt;
-
-        const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
-        const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
-        vec4 color = make_vec(lerp(p.life_time, smoke_color, fire_color), p.life_time);
-        Transform2D tr = {p.pos, p.rot, 1.0 / 16.0};
-        draw_texture(tr, 0, p.tex, color);
-
-        if p.life_time < 0  list_unordered_remove(particles, it as uint32); // TODO: fix this remove in iterator
-    }
-}
 
 void kill_entity(Entity* e) { e.hp = 0; }
 bool entity_is_dead(Entity e) { return e.hp == 0; }
@@ -117,7 +76,7 @@ Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
 }
 
 void accelerate(Entity* e, vec2 acc) {
-    e.vel = add(e.vel, mul(acc, deltatime as float32));
+    e.vel = add(e.vel, mul(acc, deltatime()));
 }
 
 // note: |dir.x| <= 1 and |dir.y| <= 1
@@ -168,12 +127,12 @@ Entity* spawn_enemy(vec2 pos) {
 }
 
 void update_entity(Entity* e) {
-    e.tr.pos = add(e.tr.pos, mul(e.vel, deltatime as float32));
-    e.tr.rot += e.ang_vel * deltatime as float32;
+    e.tr.pos = add(e.tr.pos, mul(e.vel, deltatime()));
+    e.tr.rot += e.ang_vel * deltatime();
     e.vel = mul(e.vel, linear_drag);
     // e.ang_vel *= 0.99;
 
-    e.gun_recharge -= deltatime as float32;
+    e.gun_recharge -= deltatime();
 
     vec4 color = vec4_one;
 
@@ -290,7 +249,7 @@ void update_entities() {
         apply_entity_scale(particle_scale);
         draw_elements(quad_db);
 
-        p.pos = add(p.pos, mul(p.vel, deltatime as float32));
+        p.pos = add(p.pos, mul(p.vel, deltatime()));
     }
 
 
