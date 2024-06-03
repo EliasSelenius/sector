@@ -10,6 +10,8 @@
 
 game
 
+output.g.c
+
 *.exe
 *.dll
 *.lib
