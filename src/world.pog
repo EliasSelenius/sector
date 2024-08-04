@@ -14,7 +14,7 @@
 
 
 
-
+const do_enemy_spawn = false;
 const linear_drag = 0.99;
 
 // TODO: definitely should use arena for entity pools so we dont have to worry about reference invalidation due to list resize
@@ -25,6 +25,8 @@ const player_max_hp = 200;
 
 Bullet* bullets = list_create(sizeof Bullet);
 
+Transform2D camera = {0,0, 0, 10};
+
 
 struct Entity {
     void(Entity*) behaviour;
@@ -32,7 +34,7 @@ struct Entity {
     with Transform2D tr;
     float32 depth;
 
-    Texture2D texture;
+    Sprite sprite;
 
     vec2 vel;
     float32 ang_vel;
@@ -40,6 +42,7 @@ struct Entity {
     uint32 hp;
     uint32 team_id;
     float32 gun_recharge;
+    float32 collider_radius;
 }
 
 // struct Asteroid {
@@ -61,19 +64,24 @@ void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
 void kill_entity(Entity* e) { e.hp = 0; }
 bool entity_is_dead(Entity e) { return e.hp == 0; }
 
-Entity* spawn_entity(Entity** pool, vec2 pos, Texture2D tex) {
+Entity* spawn_entity(Entity** pool, vec2 pos, Sprite sprite) {
     Entity* e = list_append(pool);
 
     @e = {};
     e.tr.pos = pos;
     e.tr.rot = 0;
-    e.tr.scale = 1.0 / 16.0;
+    e.tr.scale = 1.0;
     e.depth = 0;
     e.hp = 8;
-    e.texture = tex;
+    e.sprite = sprite;
+
+    let size = get_boundingbox_size(get_sprite_boundingbox(sprite));
+    e.collider_radius = min(size.x, size.y) * e.tr.scale / 2;
 
     return e;
 }
+
+
 
 void accelerate(Entity* e, vec2 acc) {
     e.vel = add(e.vel, mul(acc, deltatime()));
@@ -87,11 +95,18 @@ void thrust(Entity* e, vec2 dir) {
     dir.x *= non_forward_factor;
     if dir.y < 0  dir.y *= non_forward_factor;
 
-    dir = mul(dir, 5);
+    dir = mul(dir, 5*16);
 
     let acc = rotate_vec(dir, e.tr.rot);
     accelerate(e, acc);
-    spawn_particle(e.tr.pos, add(e.vel, neg(acc)));
+
+    let sprite_size = get_sprite_size(e.sprite);
+    vec2 offset = {0, -sprite_size.y / 2};
+    // vec2 offset = {25, -46};
+    vec2 particle_pos = local2world(e.tr, offset);
+
+    // TODO: neg(acc) is not scaled by deltatime?
+    spawn_particle(particle_pos, add(e.vel, neg(acc)), 0.5, 1, 0.5, 2.0);
 }
 
 void turn_to(Entity* e, vec2 target) {
@@ -106,23 +121,18 @@ void fire_gun(Entity* e) {
     if e.gun_recharge <= 0 {
         let disp = up(e.tr);
         disp.x *= -1;
-        let v = add(mul(disp, 50), e.vel);
-        const spread = 3;
-        v = add(v, random_unit_vec2(spread));
-        spawn_bullet(add(e.tr.pos, disp), v, e.team_id);
+
+        let vel = add(mul(disp, 50*16), e.vel);
+        vel = add(vel, random_vec2(3*16));
+        spawn_bullet(add(e.tr.pos, disp), vel, e.team_id);
         e.gun_recharge = 0.25;
     }
 }
 
 Entity* spawn_enemy(vec2 pos) {
     static uint32 ships_index = 0;
-    Texture2D[] ships = {
-        spaceship,
-        spaceship2,
-        spaceship_from_internet
-    };
 
-    let e = spawn_entity(*global_entity_pool, pos, ships[ships_index++ % ships.length]);
+    let e = spawn_entity(*global_entity_pool, pos, spaceship_types[ships_index++ % spaceship_types.length].sprite);
     e.tr.rot = random(global_seed++) * Pi;
     e.team_id = 1;
     e.behaviour = update_ai;
@@ -140,25 +150,25 @@ void update_entity(Entity* e) {
     vec4 color = vec4_one;
 
     for 0 .. list_length(bullets) {
-        let p = bullets[it];
-        if p.team_id == e.team_id continue;
+        let bullet = bullets[it];
+        if bullet.team_id == e.team_id continue;
 
-        float32 intersection = circle_intersects(e.tr.pos, e.texture.width * e.tr.scale / 2, p.pos, 0.3);
+        float32 intersection = circle_intersects(e.tr.pos, e.collider_radius, bullet.pos, 0.3);
         if intersection < 0 {
-            color = {100, 100, 100, 0};
+            color = {100, 100, 100, 100};
             e.hp--;
-            e.vel = add(e.vel, mul(p.vel, 0.004));
+            e.vel = add(e.vel, mul(bullet.vel, 0.004));
             list_unordered_remove(bullets, it as uint32);
             it--;
 
             if e.hp == 0 {
-                spawn_explosion(e.texture.width + e.texture.height, e.tr.pos, e.vel, 7);
+                spawn_explosion((e.collider_radius * 5) as uint32, e.tr.pos, e.vel, 7*16);
                 break;
             }
         }
     }
 
-    draw_texture(e.tr, e.depth, e.texture, color);
+    draw_sprite(e.tr, e.depth, e.sprite, color);
 
     if e.behaviour  e.behaviour(e);
 }
@@ -168,9 +178,9 @@ void update_ai(Entity* e) {
     turn_to(e, get_player().tr.pos);
     let dist = length(sub(e.tr.pos, get_player().tr.pos));
 
-    if dist < 15  fire_gun(e);
+    if dist < 15*16  fire_gun(e);
 
-    let t = dist - 5;
+    let t = dist - 5*16;
     t = t / abs(t);
     thrust(e, { 0, t } as vec2);
 }
@@ -233,23 +243,26 @@ void update_world() {
 
     bind(projectile);
     for 0 .. list_length(bullets) {
-        let p = *bullets[it];
+        let bullet = *bullets[it];
 
         const despawn_radius = 400;
-        if sqdist(get_player().tr.pos, p.pos) > (despawn_radius*despawn_radius) {
+        if sqdist(get_player().tr.pos, bullet.pos) > (despawn_radius*despawn_radius) {
             list_unordered_remove(bullets, it as uint32);
             it--;
             continue;
         }
 
-        Transform2D tr = { p.pos, vec2_to_angle(p.vel), 0.1 };
+        Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 0.1 };
         apply_transform(tr);
 
-        vec2 particle_scale = {0.25, 1}; // TODO: hard coded dimentions here
+        vec2 particle_scale = {4, 16}; // TODO: hard coded dimentions here
         apply_entity_scale(particle_scale);
+        apply_uv(vec2_zero, vec2_one);
         draw_elements(quad_db);
 
-        p.pos = add(p.pos, mul(p.vel, deltatime()));
+        // draw_texture(tr, 0.0, projectile, vec4_one);
+
+        bullet.pos = add(bullet.pos, mul(bullet.vel, deltatime()));
     }
 
 
@@ -267,7 +280,7 @@ void update_world() {
 
 void draw_background(vec2 center) {
     const s = 10;
-    const spacing = 10;
+    const spacing = 160;
     for x : -s .. s+1 for y : -s .. s+1 {
         ivec2 p_seed = make_ivec(round2multiple(center, spacing));
         p_seed.x += x * spacing; p_seed.y += y * spacing;
@@ -278,16 +291,13 @@ void draw_background(vec2 center) {
         Transform2D tr = {};
         tr.pos = add(make_vec(p_seed), mul(make_vec(random(seed++), random(seed++)), spacing / 2.0));
         tr.rot = random(seed++) * Pi;
-        tr.scale = asteroid.width as float32 / 16.0;
+        tr.scale = 1.0;
 
-        apply_transform(tr, depth);
-        apply_color(vec4_one);
-        bind(asteroid);
-        draw_elements(quad_db);
+        draw_sprite(tr, depth, sprite_asteroid_medium, vec4_one);
     }
 }
 
-const chunk_size = 100;
+const chunk_size = 1600;
 
 Chunk chunk_1 = init_chunk();
 Chunk chunk_2 = init_chunk();
@@ -323,12 +333,11 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     const half = chunk_size / 2;
     vec2 chunk_pos = make_vec(sub(mul(coord, chunk_size), { half, half } as ivec2));
 
-    const asteroids_per_square_meter = 0.01;
 
     // init interactable asteroids
-    for 0 .. asteroids_per_square_meter * chunk_size * chunk_size {
+    for 0 .. chunk_size*chunk_size / 10_000{
         vec2 pos = { random(seed++) * half, random(seed++) * half };
-        let e = spawn_entity(*chunk.entities, add(pos, chunk_pos), asteroid);
+        let e = spawn_entity(*chunk.entities, add(pos, chunk_pos), sprite_asteroid_medium);
         e.tr.rot = random(seed++) * Pi;
         e.team_id = 2;
         e.hp = 10;
@@ -336,7 +345,7 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     }
 
 
-    if random(global_seed++) < 0 {
+    if do_enemy_spawn and random(global_seed++) < 0 {
         vec2 pos = { random(seed++) * half, random(seed++) * half };
         spawn_enemy(add(pos, chunk_pos));
     }

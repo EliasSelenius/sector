@@ -10,19 +10,21 @@ struct Particle {
 }
 
 
+// TODO: use arenas for this so reallocations dont have to ocurre
 Particle* particles = list_create(sizeof Particle);
 Particle* sub_particles = list_create(sizeof Particle);
 
 
-void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, particle);
-void spawn_particle(vec2 pos, vel, Texture2D tex) {
+void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, 0.5, 2, 0.5, 3.0, particle);
+void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time) spawn_particle(pos, vel, min_size, max_size, min_time, max_time, particle);
+void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time, Texture2D tex) {
     Particle p = {};
     p.pos = pos;
     p.vel = vel;
     p.rot = random(global_seed++) * Pi;
-    p.size = random_range(global_seed++, 0.5, 2);
+    p.size = random_range(global_seed++, min_size, max_size);
     p.tex = tex;
-    p.life_time = random_range(global_seed++, 0.5, 3.0);
+    p.life_time = random_range(global_seed++, min_time, max_time);
     list_add(*particles, *p);
 }
 
@@ -46,23 +48,27 @@ vec2 shock_wave_force(vec2 shock_pos, obj_pos, float32 shock_pressure) {
     return mul(unit_dir, force);
 }
 
-void spawn_explosion(uint32 size, vec2 pos, vel, float32 spread) {
-
+void spawn_shockwave(vec2 pos, float32 pressure) {
     for 0 .. list_length(particles) {
         let p = *particles[it];
-        let force = shock_wave_force(pos, p.pos, spread * 10);
+        let force = shock_wave_force(pos, p.pos, pressure);
         p.vel = add(p.vel, mul(force, 1.0 / p.size));
     }
 
     for 0 .. list_length(sub_particles) {
         let p = *sub_particles[it];
-        let force = shock_wave_force(pos, p.pos, spread * 10);
+        let force = shock_wave_force(pos, p.pos, pressure);
         p.vel = add(p.vel, mul(force, 1.0 / p.size));
     }
+}
 
-    for 0 .. size {
+void spawn_explosion(uint32 count, vec2 pos, vel, float32 spread) {
+
+    spawn_shockwave(pos, spread * 2 * 16);
+
+    for 0 .. count {
         vec2 r = random_vec2(spread);
-        spawn_particle(pos, add(vel, r), particle);
+        spawn_particle(pos, add(vel, r));
     }
 }
 
@@ -84,7 +90,7 @@ void update_particles() {
             Transform2D tr = {
                 pos = p.pos,
                 rot = p.rot,
-                scale = p.size / 16.0
+                scale = p.size
             };
             draw_texture(tr, 0, p.tex, color);
 
