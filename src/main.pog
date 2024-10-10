@@ -20,6 +20,8 @@ include "src/inventory.pog";
     - we probably need transparancy sorting because how else do we do alpha blending with transparent objects/particles/dustclouds
     - small velocity for sub-particles
     - dust particles for asteroid break
+    - bullet impact particles
+    - spaceship debrie on destruction
 
 Priority:
     - asteroids break into smaller asteroids
@@ -92,23 +94,6 @@ vec2 get_mouse_world_coord(Transform2D cam_tr) {
 }
 
 
-struct SpaceshipType {
-    char* name;
-    vec2[] thrusters;
-    uint32 sprite_index;
-    Sprite sprite;
-    vec2[] turret_mount;
-}
-
-SpaceshipType[] spaceship_types = {
-    { name = "og",          thrusters = {}, sprite_index = 4 },
-    { name = "new",         thrusters = {}, sprite_index = 3 },
-    { name = "large_agile", thrusters = {}, sprite_index = 5 },
-    { name = "moth",        thrusters = {}, sprite_index = 6 }
-};
-
-
-
 struct Spritesheet {
     Image_Boundingbox* regions; // list
     Texture2D texture;
@@ -138,9 +123,10 @@ Texture2D particle;
 
 Spritesheet spritesheet;
 
-Sprite sprite_asteroid_tiny;
-Sprite sprite_asteroid_small;
-Sprite sprite_asteroid_medium;
+const sprites_asteroids_count = 3;
+Sprite[3] sprites_asteroids;
+
+Sprite sprite_turret;
 
 void loadassets() {
     projectile = load_texture2D("assets/proj.bmp");
@@ -166,9 +152,11 @@ void loadassets() {
         spaceship_types[it].sprite = get_sprite(*spritesheet, spaceship_types[it].sprite_index);
     }
 
-    sprite_asteroid_tiny = get_sprite(*spritesheet, 0);
-    sprite_asteroid_small = get_sprite(*spritesheet, 2);
-    sprite_asteroid_medium = get_sprite(*spritesheet, 1);
+    for 0 .. sprites_asteroids_count {
+        sprites_asteroids[it] = get_sprite(*spritesheet, it);
+    }
+
+    sprite_turret = get_sprite(*spritesheet, 8);
 }
 
 void on_event(AppEvent event, AppEventData data) switch event {
@@ -198,9 +186,13 @@ void main() {
         update_buffers(*quad_db, verts, inds);
     }
 
-    let player = spawn_entity(*global_entity_pool, vec2_zero, spaceship_types[0].sprite);
+    let player = spawn_entity(*entity_pool, vec2_zero, spaceship_types[0].sprite);
     player.hp = player_max_hp;
     player.team_id = 0;
+
+    let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
+    turret.entity_type = .turret;
+    turret.parent = player;
 
     set_clear_color(rgba(0x0a0a0aff));
 
@@ -216,28 +208,18 @@ void drawframe() {
     enable_depth_test();
 
     let player = get_player();
+    vec2 mouse_world_pos = get_mouse_world_coord(camera);
 
     camera.pos = lerp(0.1, camera.pos, player.tr.pos); // TODO: exponential decay?
     camera.scale = (10*16.0 + length(player.vel) / 10);
     apply_camera(camera);
 
 
-    vec2 mouse_world_pos = get_mouse_world_coord(camera);
-
-    if mouse_pressed(Right_Mouse) {
-        let e = spawn_enemy(mouse_world_pos);
-        // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
-
-        // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
-    }
-
-
-
     { // update player
-        thrust(player, wasd);
+        thrust(player, Input.wasd);
         turn_to(player, mouse_world_pos);
         if mouse(Left_Mouse) fire_gun(player);
-        if entity_is_dead(@player) {
+        if is_dead(@player) {
             player.hp = player_max_hp;
             player.tr.pos = vec2_zero;
         }
@@ -248,6 +230,14 @@ void drawframe() {
         pos = draw_text(pos, font_size, " / ", White);
         pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     }
+
+    if mouse_pressed(Right_Mouse) {
+        let e = spawn_enemy(mouse_world_pos);
+        // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+
+        // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
+    }
+
 
     update_world();
 }

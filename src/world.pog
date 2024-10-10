@@ -14,12 +14,96 @@
 
 
 
-const do_enemy_spawn = false;
+
+// Arena* arean_entities = arena_create();
+// uint32 entities_count = 0;
+// Entity* spawn() {
+//     Entity* en = arena_alloc(arean_entities, sizeof Entity);
+
+//     entities_count++;
+//     return en;
+// }
+
+// removes dead entities and defragments arena while retaining correct parent pointer for dead/relocated parent entities
+// void cleanup_entities() {
+//     Entity* entities = arean_entities as uint64 + sizeof(Arena);
+
+//     for 0 .. entities_count {
+//         let en = *entities[it];
+//         if en.parent and is_dead(@en.parent) en.parent = null;
+//     }
+
+//     for 0 .. entities_count {
+//         let en = *entities[it];
+//         if is_dead(@en) {
+//             let last_en = *entities[entities_count-1];
+//             @en = @last_en;
+//             @(last_en as uint32*) = it;
+//             entities_count--;
+//             it--;
+//         }
+//     }
+
+//     for 0 .. entities_count {
+//         let en = *entities[it];
+//         if en.parent {
+//             if en.parent as uint64 >= *entities[entities_count] as uint64 {
+//                 en.parent = *entities[@(en.parent as uint32*)];
+//             }
+//         }
+//     }
+
+// }
+
+
+
+struct EntityPool {
+    Entity* data;
+    uint32 count;
+}
+
+EntityPool init_pool() {
+    return {
+        data = vmem_reserve(0xFFFF_FFFF)
+    };
+}
+
+Entity* entity_new(EntityPool* pool) {
+    for 0 .. pool.count {
+        let en = *pool.data[it];
+        // TODO: error: Cannot infer implicit dereferencing ".ready_for_reuse".
+        // we should be able to use implicit dereferencing here
+        if en.entity_type == EntityType.ready_for_reuse  return en;
+    }
+
+    // TODO: should vmem_commit be wrapped in a condition for performance?
+    vmem_commit(pool.data, ++pool.count * sizeof Entity);
+    return *pool.data[pool.count-1];
+}
+
+void cleanup_pool(EntityPool* pool) {
+    for 0 .. pool.count {
+        let en = *pool.data[it];
+        if en.parent and is_dead(@en.parent) en.parent = null;
+
+        if is_dead(@en) en.entity_type = .ready_for_reuse;
+    }
+
+    uint32 i = pool.count-1;
+    while true {
+        let en = *pool.data[i--];
+        if is_dead(@en)  pool.count--;
+        else break;
+    }
+
+}
+
+
+const do_enemy_spawn = true;
 const linear_drag = 0.99;
 
-// TODO: definitely should use arena for entity pools so we dont have to worry about reference invalidation due to list resize
-Entity* global_entity_pool = list_create(sizeof Entity);
-Entity* get_player() { return *global_entity_pool[0]; }
+EntityPool entity_pool = init_pool();
+Entity* get_player() { return *entity_pool.data[0]; }
 
 const player_max_hp = 200;
 
@@ -27,9 +111,42 @@ Bullet* bullets = list_create(sizeof Bullet);
 
 Transform2D camera = {0,0, 0, 10};
 
+struct SpaceshipType {
+    char* name;
+    vec2[] thrusters;
+    uint32 sprite_index;
+    Sprite sprite;
+    vec2[] turret_mount;
+}
+
+SpaceshipType[] spaceship_types = {
+    { name = "og",          thrusters = {}, sprite_index = 4 },
+    { name = "new",         thrusters = {}, sprite_index = 3 },
+    { name = "large_agile", thrusters = {}, sprite_index = 5 },
+    { name = "moth",        thrusters = {}, sprite_index = 6 },
+    { name = "idunno",      thrusters = {}, sprite_index = 7 }
+};
+
+
+enum EntityType {
+    none; // default no behaviour
+    ready_for_reuse;
+    ship; turret;
+    station; asteroid;
+    item;
+}
+
+enum EntityEvent {
+    spawned; despawned;
+    damage_taken;
+}
 
 struct Entity {
+    Entity* parent;
     void(Entity*) behaviour;
+    void(Entity*, EntityEvent, void*) event;
+
+    EntityType entity_type;
 
     with Transform2D tr;
     float32 depth;
@@ -38,16 +155,16 @@ struct Entity {
 
     vec2 vel;
     float32 ang_vel;
+    float32 mass;
 
     uint32 hp;
     uint32 team_id;
     float32 gun_recharge;
     float32 collider_radius;
+
+    Cargo* cargo;
+    Item item;
 }
-
-// struct Asteroid {
-
-// }
 
 struct Bullet {
     vec2 pos;
@@ -62,29 +179,55 @@ void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
 
 
 void kill_entity(Entity* e) { e.hp = 0; }
-bool entity_is_dead(Entity e) { return e.hp == 0; }
+bool is_dead(Entity e) { return e.hp == 0; }
 
-Entity* spawn_entity(Entity** pool, vec2 pos, Sprite sprite) {
-    Entity* e = list_append(pool);
+Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
+    let e = entity_new(pool);
 
     @e = {};
     e.tr.pos = pos;
-    e.tr.rot = 0;
-    e.tr.scale = 1.0;
-    e.depth = 0;
-    e.hp = 8;
+    e.tr.scale = 1;
     e.sprite = sprite;
 
     let size = get_boundingbox_size(get_sprite_boundingbox(sprite));
     e.collider_radius = min(size.x, size.y) * e.tr.scale / 2;
 
+    e.hp = (size.x + size.y) / 20;
+    e.mass = size.x * size.y;
+
     return e;
 }
 
+Entity* spawn_enemy(vec2 pos) {
+    static uint32 ships_index = 0;
 
+    let en = spawn_entity(*entity_pool, pos, spaceship_types[ships_index++ % spaceship_types.length].sprite);
+    en.entity_type = .ship;
+    en.tr.rot = random(global_seed++) * Pi;
+    en.team_id = 1;
+    en.behaviour = update_ai;
+    return en;
+}
+
+Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
+
+    let sprite = sprites_asteroids[asteroid_index];
+    let en = spawn_entity(pool, pos, sprite);
+    en.entity_type = .asteroid;
+
+    en.tr.rot = random(global_seed++) * Pi;
+    en.team_id = 2;
+    en.depth = 0.01;
+
+    return en;
+}
 
 void accelerate(Entity* e, vec2 acc) {
     e.vel = add(e.vel, mul(acc, deltatime()));
+}
+
+void add_force(Entity* en, vec2 force) {
+    en.vel = en.vel + force / en.mass;
 }
 
 // note: |dir.x| <= 1 and |dir.y| <= 1
@@ -129,48 +272,68 @@ void fire_gun(Entity* e) {
     }
 }
 
-Entity* spawn_enemy(vec2 pos) {
-    static uint32 ships_index = 0;
+void on_destroy(Entity* en) {
 
-    let e = spawn_entity(*global_entity_pool, pos, spaceship_types[ships_index++ % spaceship_types.length].sprite);
-    e.tr.rot = random(global_seed++) * Pi;
-    e.team_id = 1;
-    e.behaviour = update_ai;
-    return e;
+    switch en.entity_type {
+        case .ship: {
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+        } break;
+        case .turret: {
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+        } break;
+
+        case .station: break;
+        case .asteroid: {
+            let asteroid_index = en.sprite.bb_index; // TODO: hack! bb_index happens to be equal the asteroid_index. Maybe Entity could have a uint32 level; that would be an agnostic field
+            if asteroid_index {
+                for 0 .. 2 {
+                    let a = spawn_asteroid(*entity_pool, en.tr.pos, asteroid_index - 1);
+                    a.vel = a.vel + en.vel + random_unit_vec2() * 50;
+                    a.ang_vel = random(global_seed++) * Pi;
+                }
+            }
+
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+        } break;
+        case .item: break;
+    }
 }
 
-void update_entity(Entity* e) {
-    e.tr.pos = add(e.tr.pos, mul(e.vel, deltatime()));
-    e.tr.rot += e.ang_vel * deltatime();
-    e.vel = mul(e.vel, linear_drag);
-    // e.ang_vel *= 0.99;
+void update_entity(Entity* en) {
+    let dt = deltatime();
+    en.tr.pos = en.tr.pos + en.vel * dt;
+    en.tr.rot += en.ang_vel * dt;
+    en.vel = en.vel * linear_drag;
+    en.ang_vel *= 0.99;
 
-    e.gun_recharge -= deltatime();
+    if en.gun_recharge > 0  en.gun_recharge -= dt;
+    if en.behaviour  en.behaviour(en);
+
+    if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
+
 
     vec4 color = vec4_one;
 
     for 0 .. list_length(bullets) {
         let bullet = bullets[it];
-        if bullet.team_id == e.team_id continue;
+        if bullet.team_id == en.team_id continue;
 
-        float32 intersection = circle_intersects(e.tr.pos, e.collider_radius, bullet.pos, 0.3);
+        float32 intersection = circle_intersects(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
         if intersection < 0 {
             color = {100, 100, 100, 100};
-            e.hp--;
-            e.vel = add(e.vel, mul(bullet.vel, 0.004));
+            en.hp--;
+            en.vel = add(en.vel, mul(bullet.vel, 0.004));
             list_unordered_remove(bullets, it as uint32);
             it--;
 
-            if e.hp == 0 {
-                spawn_explosion((e.collider_radius * 5) as uint32, e.tr.pos, e.vel, 7*16);
+            if is_dead(@en) {
+                on_destroy(en);
                 break;
             }
         }
     }
 
-    draw_sprite(e.tr, e.depth, e.sprite, color);
-
-    if e.behaviour  e.behaviour(e);
+    draw_sprite(en.tr, en.depth, en.sprite, color);
 }
 
 void update_ai(Entity* e) {
@@ -226,19 +389,25 @@ void update_world() {
 
 
 
-    void update_entity_list(Entity* ens) {
-        for 0 .. list_length(ens) {
-            let e = *ens[it];
-            if entity_is_dead(@e) continue;
+    void update_entity_list(EntityPool* pool) {
+        for 0 .. pool.count {
+            let e = *pool.data[it];
+            if is_dead(@e) continue;
             update_entity(e);
         }
     }
 
-    update_entity_list(global_entity_pool);
-    update_entity_list(chunk_1.entities);
-    update_entity_list(chunk_2.entities);
-    update_entity_list(chunk_3.entities);
-    update_entity_list(chunk_4.entities);
+    update_entity_list(*entity_pool);
+    update_entity_list(*chunk_1.entity_pool);
+    update_entity_list(*chunk_2.entity_pool);
+    update_entity_list(*chunk_3.entity_pool);
+    update_entity_list(*chunk_4.entity_pool);
+
+    cleanup_pool(*entity_pool);
+    cleanup_pool(*chunk_1.entity_pool);
+    cleanup_pool(*chunk_2.entity_pool);
+    cleanup_pool(*chunk_3.entity_pool);
+    cleanup_pool(*chunk_4.entity_pool);
 
 
     bind(projectile);
@@ -293,7 +462,7 @@ void draw_background(vec2 center) {
         tr.rot = random(seed++) * Pi;
         tr.scale = 1.0;
 
-        draw_sprite(tr, depth, sprite_asteroid_medium, vec4_one);
+        draw_sprite(tr, depth, sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32], vec4_one);
     }
 }
 
@@ -307,7 +476,7 @@ Chunk chunk_4 = init_chunk();
 
 struct Chunk {
     ivec2 coord;
-    Entity* entities;
+    EntityPool entity_pool;
 }
 
 ivec2 get_chunk_coord(vec2 pos) {
@@ -317,13 +486,13 @@ ivec2 get_chunk_coord(vec2 pos) {
 Chunk init_chunk() {
     Chunk s = {};
     s.coord = {999, 999}; // NOTE: this is to fix bug where chunk 0,0 wont generate at game start
-    s.entities = list_create(sizeof Entity);
+    s.entity_pool = init_pool();
     return s;
 }
 
 void spawn_chunk(Chunk* chunk, ivec2 coord) {
     chunk.coord = coord;
-    list_clear(chunk.entities);
+    chunk.entity_pool.count = 0;
 
     int32 seed = (coord.x & 0x0000FFFF) |
                 ((coord.y << 16) & 0xFFFF0000);
@@ -335,18 +504,18 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
 
 
     // init interactable asteroids
-    for 0 .. chunk_size*chunk_size / 10_000{
+    for 0 .. chunk_size*chunk_size / 10_000 {
+
+        uint32 asteroid_index = (random01(seed++) * sprites_asteroids_count) as uint32;
         vec2 pos = { random(seed++) * half, random(seed++) * half };
-        let e = spawn_entity(*chunk.entities, add(pos, chunk_pos), sprite_asteroid_medium);
-        e.tr.rot = random(seed++) * Pi;
-        e.team_id = 2;
-        e.hp = 10;
-        e.depth = 0.01;
+        let en = spawn_asteroid(*chunk.entity_pool, pos + chunk_pos, asteroid_index);
+        en.tr.rot = random(seed++) * Pi;
+        en.depth = 0.01;
     }
 
 
     if do_enemy_spawn and random(global_seed++) < 0 {
         vec2 pos = { random(seed++) * half, random(seed++) * half };
-        spawn_enemy(add(pos, chunk_pos));
+        spawn_enemy(pos + chunk_pos);
     }
 }

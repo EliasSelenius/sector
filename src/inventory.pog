@@ -1,6 +1,7 @@
 
+const ItemKind_Count = 2;
 enum ItemKind {
-    none; rock;
+    Rock; IronOre;
 }
 
 struct Item {
@@ -9,12 +10,46 @@ struct Item {
 }
 
 struct Cargo {
-    Item* items;
-    uint32 capacity;
+    Item[ItemKind_Count] items;
 }
 
-void drop_cargo(Entity* en, Cargo* cargo) {
+void pickup(Entity* en, drop) {
+    const pickup_range = 3;
+    let sq_dist = sqdist(en.tr.pos, drop.tr.pos);
+    if sq_dist > pickup_range*pickup_range  return;
 
+    // if sq_dist >
+
+    if en.cargo == null {
+        en.cargo = alloc Cargo;
+        @en.cargo = {};
+    }
+
+    const limit = 0xFFFF;
+    uint32 existing = en.cargo.items[drop.item.kind].stack_count;
+    uint32 amount = min(limit - existing, drop.item.stack_count);
+
+    drop.item.stack_count -= amount;
+    en.cargo.items[drop.item.kind].stack_count += amount;
+
+    if drop.item.stack_count == 0  kill_entity(drop);
+}
+
+void drop_cargo(Entity* en) {
+    if en.cargo == null  return;
+
+    for 0 .. ItemKind_Count {
+        let item = en.cargo.items[it];
+        if item.stack_count == 0 continue;
+
+        let drop = spawn_entity(*entity_pool, en.tr.pos, sprite_turret);
+        drop.entity_type = .item;
+        drop.item = item;
+        accelerate(drop, random_unit_vec2());
+    }
+
+    free(en.cargo);
+    en.cargo = null;
 }
 
 void draw_inventory() {
