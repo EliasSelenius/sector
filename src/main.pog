@@ -186,58 +186,13 @@ void main() {
         update_buffers(*quad_db, verts, inds);
     }
 
-    let player = spawn_entity(*entity_pool, vec2_zero, spaceship_types[0].sprite);
-    player.hp = player_max_hp;
-    player.team_id = 0;
-
-    let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
-    turret.entity_type = .turret;
-    turret.parent = player;
-
     set_clear_color(rgba(0x0a0a0aff));
 
     while grax_loop() {
-        drawframe();
+        use(*default2d_shader);
+        enable_alpha_blending();
+        enable_depth_test();
+
+        update_world();
     }
-}
-
-
-void drawframe() {
-    use(*default2d_shader);
-    enable_alpha_blending();
-    enable_depth_test();
-
-    let player = get_player();
-    vec2 mouse_world_pos = get_mouse_world_coord(camera);
-
-    camera.pos = lerp(0.1, camera.pos, player.tr.pos); // TODO: exponential decay?
-    camera.scale = (10*16.0 + length(player.vel) / 10);
-    apply_camera(camera);
-
-
-    { // update player
-        thrust(player, Input.wasd);
-        turn_to(player, mouse_world_pos);
-        if mouse(Left_Mouse) fire_gun(player);
-        if is_dead(@player) {
-            player.hp = player_max_hp;
-            player.tr.pos = vec2_zero;
-        }
-
-        const font_size = 0.1;
-        vec2 pos = {-1, 1 - font_size / 2};
-        pos = draw_text(pos, font_size, to_string(player.hp as uint64), White);
-        pos = draw_text(pos, font_size, " / ", White);
-        pos = draw_text(pos, font_size, to_string(player_max_hp), White);
-    }
-
-    if mouse_pressed(Right_Mouse) {
-        let e = spawn_enemy(mouse_world_pos);
-        // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
-
-        // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
-    }
-
-
-    update_world();
 }
