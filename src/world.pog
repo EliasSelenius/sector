@@ -99,13 +99,13 @@ void cleanup_pool(EntityPool* pool) {
 }
 
 
-const do_enemy_spawn = true;
+const do_enemy_spawn = false;
 const linear_drag = 0.99;
 
 EntityPool entity_pool = init_pool();
 Entity* player;
 
-const player_max_hp = 100;
+const player_max_hp = 10;
 const player_team_id = 0;
 
 Bullet* bullets = list_create(sizeof Bullet);
@@ -236,6 +236,13 @@ Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
     return en;
 }
 
+Entity* spawn_item(vec2 pos, Item item) {
+    let en = spawn_entity(*entity_pool, pos, sprites_items[item.kind]);
+    en.entity_type = .item;
+    en.item = item;
+    return en;
+}
+
 void accelerate(Entity* e, vec2 acc) {
     e.vel = add(e.vel, mul(acc, deltatime()));
 }
@@ -293,6 +300,7 @@ void on_destroy(Entity* en) {
     switch en.entity_type {
         case .ship: {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+            drop_cargo(en);
         } break;
         case .turret: {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
@@ -307,11 +315,20 @@ void on_destroy(Entity* en) {
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
+            } else {
+                let drop_count = random_range(global_seed++, 0, 7) as uint32;
+                for 0 .. drop_count {
+                    let a = spawn_item(en.tr.pos, { ItemKind.Rock, 3 } as Item);
+                    a.vel = a.vel + en.vel + random_unit_vec2() * 50;
+                    a.ang_vel = random(global_seed++) * Pi;
+                }
             }
 
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
         } break;
-        case .item: break;
+
+        case .item: {
+        } break;
     }
 }
 
@@ -327,6 +344,20 @@ void update_entity(Entity* en) {
 
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
+    switch en.entity_type {
+        case .item: {
+            // const pickup_range = 3;
+            // let sq_dist = sqdist(en.tr.pos, drop.tr.pos);
+            // if sq_dist > pickup_range*pickup_range  return;
+
+
+            if player and !is_dead(player) and entity_intersects(en, player) {
+                pickup(player, en);
+            }
+        } break;
+
+        default: break;
+    }
 
     vec4 color = vec4_one;
 
@@ -334,7 +365,7 @@ void update_entity(Entity* en) {
         let bullet = bullets[it];
         if bullet.team_id == en.team_id continue;
 
-        float32 intersection = circle_intersects(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
+        float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
         if intersection < 0 {
             color = {100, 100, 100, 100};
             en.hp--;
@@ -366,31 +397,42 @@ void update_ai(Entity* e) {
     thrust(e, { 0, t } as vec2);
 }
 
-float32 circle_intersects(vec2 p0, float32 r0, vec2 p1, float32 r1) {
+float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     let len = length(sub(p0, p1));
     let r = r0 + r1;
     return len - r;
 }
 
+float32 entity_intersects(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius) < 0;
+
 Entity* query_entity(vec2 pos) {
     for 0 .. entity_pool.count {
         let e = *entity_pool.data[it];
-        if !is_dead(e) and circle_intersects(pos, 0, e.tr.pos, e.collider_radius) < 0   return e;
+        if !is_dead(e) and circle_dist(pos, 0, e.tr.pos, e.collider_radius) < 0   return e;
     }
 
     return null;
 }
 
 void update_world() {
+    let dt = deltatime();
 
     if player and is_dead(player)   player = null;
 
+    if player {
+        camera.pos = exp_decay(camera.pos, player.tr.pos, 4, dt);
+
+        static float32 cam_zoom = 160;
+        cam_zoom = clamp(cam_zoom - cam_zoom*0.1*Input.mouse_scroll, 160, 1000);
+        float32 cam_scale_target = (cam_zoom + length(player.vel) / 7);
+        camera.scale = exp_decay(camera.scale, cam_scale_target, 5, dt);
+    }
+
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
+    apply_camera(camera);
+
 
     if player {
-        camera.pos = lerp(0.1, camera.pos, player.tr.pos); // TODO: exponential decay?
-        camera.scale = (10*16.0 + length(player.vel) / 10);
-
         thrust(player, Input.wasd);
         turn_to(player, mouse_world_pos);
         if mouse(Left_Mouse) fire_gun(player);
@@ -404,13 +446,14 @@ void update_world() {
         player = spawn_player();
     }
 
-    apply_camera(camera);
 
     if mouse_pressed(Right_Mouse) {
         let e = spawn_enemy(mouse_world_pos);
         // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
 
         // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
+
+        // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
     }
 
     if mouse_pressed(Left_Mouse) {

@@ -14,12 +14,6 @@ struct Cargo {
 }
 
 void pickup(Entity* en, drop) {
-    const pickup_range = 3;
-    let sq_dist = sqdist(en.tr.pos, drop.tr.pos);
-    if sq_dist > pickup_range*pickup_range  return;
-
-    // if sq_dist >
-
     if en.cargo == null {
         en.cargo = alloc Cargo;
         @en.cargo = {};
@@ -42,9 +36,7 @@ void drop_cargo(Entity* en) {
         let item = en.cargo.items[it];
         if item.stack_count == 0 continue;
 
-        let drop = spawn_entity(*entity_pool, en.tr.pos, sprite_turret);
-        drop.entity_type = .item;
-        drop.item = item;
+        let drop = spawn_item(en.tr.pos, item);
         accelerate(drop, random_unit_vec2());
     }
 

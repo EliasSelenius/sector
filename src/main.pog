@@ -21,6 +21,7 @@ include "src/inventory.pog";
     - small velocity for sub-particles
     - dust particles for asteroid break
     - bullet impact particles
+    - bullet particle trail
     - spaceship debrie on destruction
 
 Priority:
@@ -122,11 +123,25 @@ Texture2D projectile;
 Texture2D particle;
 
 Spritesheet spritesheet;
+Spritesheet spritesheet_items;
 
 const sprites_asteroids_count = 3;
 Sprite[3] sprites_asteroids;
 
+Sprite[2] sprites_items;
+
 Sprite sprite_turret;
+
+// struct Assets {
+//     Spritesheet spritesheet;
+//     Spritesheet spritesheet_items;
+
+//     Sprite[] sprites;
+
+//     Sprite*[sprites_asteroids_count] asteroids;
+//     Sprite*[] spaceships;
+//     Sprite*[ItemKind_Count] items;
+// }
 
 void loadassets() {
     projectile = load_texture2D("assets/proj.bmp");
@@ -147,6 +162,7 @@ void loadassets() {
     }
 
     spritesheet = load_spritesheet("assets/spritesheet.bmp");
+    spritesheet_items = load_spritesheet("assets/Items.bmp");
 
     for 0 .. spaceship_types.length {
         spaceship_types[it].sprite = get_sprite(*spritesheet, spaceship_types[it].sprite_index);
@@ -154,6 +170,10 @@ void loadassets() {
 
     for 0 .. sprites_asteroids_count {
         sprites_asteroids[it] = get_sprite(*spritesheet, it);
+    }
+
+    for 0 .. ItemKind_Count {
+        sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
     sprite_turret = get_sprite(*spritesheet, 8);
