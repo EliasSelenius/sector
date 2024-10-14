@@ -6,10 +6,11 @@ enum ItemKind {
 
 struct Item {
     ItemKind kind;
-    uint16 stack_count;
+    uint32 stack_count;
 }
 
 struct Cargo {
+    uint32 amount;
     Item[ItemKind_Count] items;
 }
 
@@ -19,25 +20,29 @@ void pickup(Entity* en, drop) {
         @en.cargo = {};
     }
 
-    const limit = 0xFFFF;
-    uint32 existing = en.cargo.items[drop.item.kind].stack_count;
-    uint32 amount = min(limit - existing, drop.item.stack_count);
+    int32 cap_left = en.cargo_capacity as int32 - en.cargo.amount as int32;
+    if cap_left <= 0 return;
+    uint32 amount = min(cap_left, drop.item.stack_count);
 
     drop.item.stack_count -= amount;
     en.cargo.items[drop.item.kind].stack_count += amount;
+    en.cargo.amount += amount;
 
     if drop.item.stack_count == 0  kill_entity(drop);
 }
 
-void drop_cargo(Entity* en) {
+void drop_cargo(Entity* en, float32 cooldown) {
     if en.cargo == null  return;
 
     for 0 .. ItemKind_Count {
         let item = en.cargo.items[it];
-        if item.stack_count == 0 continue;
 
-        let drop = spawn_item(en.tr.pos, item);
-        accelerate(drop, random_unit_vec2());
+        for 0 .. item.stack_count {
+            let drop = spawn_item(en.tr.pos, item.kind, 1);
+            drop.vel = drop.vel + en.vel + random_vec2(50);
+            drop.ang_vel = random(global_seed++) * Pi;
+            drop.cooldown = cooldown;
+        }
     }
 
     free(en.cargo);

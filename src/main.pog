@@ -23,6 +23,8 @@ include "src/inventory.pog";
     - bullet impact particles
     - bullet particle trail
     - spaceship debrie on destruction
+    - cargo capacity and health bar
+        - animate with exp_decay, flash and size increase
 
 Priority:
     - asteroids break into smaller asteroids
@@ -214,5 +216,26 @@ void main() {
         enable_depth_test();
 
         update_world();
+
+        draw_gui();
+    }
+}
+
+void draw_gui() {
+
+    Color bar_bg  = rgba(0xAA_AA_AA_FF);
+    Color bar_cap = rgba(0x00_30_FF_FF);
+
+    float32 bar_width = 1;
+    float32 bar_height = 0.1;
+
+    vec2 size = { bar_width, bar_height };
+
+    if player {
+
+        let prct = (player.cargo ? player.cargo.amount : 0) / player.cargo_capacity as float32;
+
+        draw_rect(app.bottom_left + make_vec(0.1 + bar_width/2, bar_height), size, bar_bg);
+        draw_rect(app.bottom_left + make_vec(0.1 + bar_width/2, bar_height), make_vec(bar_width * prct, bar_height), bar_cap);
     }
 }
