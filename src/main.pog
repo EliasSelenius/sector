@@ -218,24 +218,75 @@ void main() {
         update_world();
 
         draw_gui();
+
+        this_frame = {};
     }
 }
 
+ThisFrameData this_frame;
+struct ThisFrameData {
+    bool player_pickup_item;
+    bool player_took_damage;
+}
+
+struct Gui_Bar {
+    vec4 color;
+    float32 height;
+
+    vec4 target_color;
+    float32 target_height;
+
+    float32 progress;
+}
+
+Gui_Bar bar_player_capacity;
+Gui_Bar bar_player_health;
+
+void draw_bar(Gui_Bar* bar, vec2 pos, float32 width) {
+    Color bar_bg  = rgba(0xAA_AA_AA_A0);
+
+    vec2 size  = { width, bar.target_height };
+    vec2 size2 = { width * bar.progress, bar.height };
+
+    anchor = .bottom_left;
+    draw_rect(pos, size, bar_bg);
+    draw_rect(pos, size2, rgba(bar.color));
+    anchor = .center;
+
+    let dt = deltatime();
+    float32 rate = 10;
+    bar.color = exp_decay(bar.color, bar.target_color, rate, dt);
+    bar.height = exp_decay(bar.height, bar.target_height, rate, dt);
+}
+
 void draw_gui() {
+    float32 height = 0.07;
 
-    Color bar_bg  = rgba(0xAA_AA_AA_FF);
-    Color bar_cap = rgba(0x00_30_FF_FF);
+    bar_player_capacity.target_color = color_to_vec4(rgba(0x10_60_E0_F0));
+    bar_player_capacity.target_height = height;
 
-    float32 bar_width = 1;
-    float32 bar_height = 0.1;
+    bar_player_health.target_color = color_to_vec4(rgba(0xFF_60_40_F0));
+    bar_player_health.target_height = height;
 
-    vec2 size = { bar_width, bar_height };
+    if this_frame.player_took_damage {
+        bar_player_health.color = vec4_one;
+        bar_player_health.height = height * 1.2;
+    }
+
+    if this_frame.player_pickup_item {
+        bar_player_capacity.color = vec4_one;
+        bar_player_capacity.height = height * 1.2;
+    }
 
     if player {
+        vec2 pos = app.bottom_left + make_vec(height, height);
 
-        let prct = (player.cargo ? player.cargo.amount : 0) / player.cargo_capacity as float32;
+        bar_player_capacity.progress = cargo_amount(player) / player.cargo_capacity as float32;
+        draw_bar(*bar_player_capacity, pos, 1.0);
 
-        draw_rect(app.bottom_left + make_vec(0.1 + bar_width/2, bar_height), size, bar_bg);
-        draw_rect(app.bottom_left + make_vec(0.1 + bar_width/2, bar_height), make_vec(bar_width * prct, bar_height), bar_cap);
+        pos.y += height * 1.5;
+
+        bar_player_health.progress = player.hp / player.max_hp as float32;
+        draw_bar(*bar_player_health, pos, 1.0);
     }
 }

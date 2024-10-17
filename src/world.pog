@@ -160,7 +160,7 @@ struct Entity {
     float32 ang_vel;
     float32 mass;
 
-    uint32 hp;
+    uint32 hp, max_hp;
     uint32 team_id;
     uint32 cargo_capacity;
     float32 cooldown;
@@ -197,7 +197,8 @@ Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
     let size = get_boundingbox_size(get_sprite_boundingbox(sprite));
     en.collider_radius = min(size.x, size.y) * en.tr.scale / 2;
 
-    en.hp = (size.x + size.y) / 20;
+    en.max_hp = (size.x + size.y) / 20;
+    en.hp = en.max_hp;
     en.mass = size.x * size.y;
     return en;
 }
@@ -207,6 +208,10 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type) {
 
     let en = spawn_entity(*entity_pool, pos, sst.sprite);
     en.entity_type = .ship;
+
+    en.max_hp *= 6;
+    en.hp = en.max_hp;
+
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = sst.cargo_capacity;
     return en;
@@ -364,7 +369,9 @@ void update_entity(Entity* en) {
 
 
             if player and !is_dead(player) and entity_intersects(en, player) {
-                if en.cooldown <= 0 pickup(player, en);
+                if en.cooldown <= 0 {
+                    pickup(player, en);
+                }
             }
         } break;
 
@@ -382,6 +389,9 @@ void update_entity(Entity* en) {
             color = {100, 100, 100, 100};
             en.hp--;
             en.vel = add(en.vel, mul(bullet.vel, 0.004));
+
+            if en == player  this_frame.player_took_damage = true;
+
             list_unordered_remove(bullets, it as uint32);
             it--;
 
@@ -431,13 +441,23 @@ void update_world() {
 
     if player and is_dead(player)   player = null;
 
-    if player {
-        camera.pos = exp_decay(camera.pos, player.tr.pos, 4, dt);
+    { // camera controlls:
+        static vec2 target_cam_pos = {};
+        static float32 target_cam_zoom = 160;
 
-        static float32 cam_zoom = 160;
-        cam_zoom = clamp(cam_zoom - cam_zoom*0.1*Input.mouse_scroll, 160, 1000);
-        float32 cam_scale_target = (cam_zoom + length(player.vel) / 7);
-        camera.scale = exp_decay(camera.scale, cam_scale_target, 5, dt);
+        target_cam_zoom = clamp(target_cam_zoom - target_cam_zoom*0.1*Input.mouse_scroll, 160, 1000);
+        float32 target_cam_scale = target_cam_zoom;
+
+        if player {
+            target_cam_pos = player.tr.pos;
+
+            target_cam_scale += length(player.vel) / 7;
+        } else {
+            target_cam_pos = target_cam_pos + Input.wasd * target_cam_zoom / 100;
+        }
+
+        camera.pos = exp_decay(camera.pos, target_cam_pos, 4, dt);
+        camera.scale = exp_decay(camera.scale, target_cam_scale, 5, dt);
     }
 
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
@@ -451,11 +471,11 @@ void update_world() {
 
         if key_pressed('Q') drop_cargo(player, 5);
 
-        const font_size = 0.1;
-        vec2 pos = {-1, 1 - font_size / 2};
-        pos = draw_text(pos, font_size, to_string(player.hp as uint64), White);
-        pos = draw_text(pos, font_size, " / ", White);
-        pos = draw_text(pos, font_size, to_string(player_max_hp), White);
+        // const font_size = 0.1;
+        // vec2 pos = {-1, 1 - font_size / 2};
+        // pos = draw_text(pos, font_size, to_string(player.hp as uint64), White);
+        // pos = draw_text(pos, font_size, " / ", White);
+        // pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     } else {
         // player = spawn_player();
     }
@@ -470,7 +490,7 @@ void update_world() {
         // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
     }
 
-    if mouse_pressed(Left_Mouse) {
+    if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
         let en = query_entity(mouse_world_pos);
         if en and en.entity_type == EntityType.ship {
             en.behaviour = null;

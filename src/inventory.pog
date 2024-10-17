@@ -14,6 +14,8 @@ struct Cargo {
     Item[ItemKind_Count] items;
 }
 
+uint32 cargo_amount(Entity* en) return en.cargo ? en.cargo.amount : 0;
+
 void pickup(Entity* en, drop) {
     if en.cargo == null {
         en.cargo = alloc Cargo;
@@ -29,6 +31,8 @@ void pickup(Entity* en, drop) {
     en.cargo.amount += amount;
 
     if drop.item.stack_count == 0  kill_entity(drop);
+
+    if en == player and amount   this_frame.player_pickup_item = true;
 }
 
 void drop_cargo(Entity* en, float32 cooldown) {
