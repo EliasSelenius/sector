@@ -92,7 +92,7 @@ void update_particles() {
                 rot = p.rot,
                 scale = p.size
             };
-            draw_texture(tr, 0, p.tex, color);
+            draw_texture(tr, 0, p.tex, color, vec4_zero);
 
             if has_sub_emitter {
                 spawn_sub_particle(p);

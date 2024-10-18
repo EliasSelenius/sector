@@ -30,7 +30,7 @@ void pickup(Entity* en, drop) {
     en.cargo.items[drop.item.kind].stack_count += amount;
     en.cargo.amount += amount;
 
-    if drop.item.stack_count == 0  kill_entity(drop);
+    if drop.item.stack_count == 0  despawn(drop);
 
     if en == player and amount   this_frame.player_pickup_item = true;
 }

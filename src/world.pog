@@ -85,6 +85,7 @@ void cleanup_pool(EntityPool* pool) {
     for 0 .. pool.count {
         let en = *pool.data[it];
         if en.parent and is_dead(en.parent) en.parent = null;
+        if en.target and is_dead(en.target) en.target = null;
 
         if is_dead(en) en.entity_type = .ready_for_reuse;
     }
@@ -104,8 +105,9 @@ const linear_drag = 0.99;
 EntityPool entity_pool = init_pool();
 Entity* player;
 
-const player_max_hp = 10;
-const player_team_id = 0;
+
+const team_id_asteroids = 0;
+const team_id_player = 1;
 
 Bullet* bullets = list_create(sizeof Bullet);
 
@@ -130,6 +132,9 @@ SpaceshipType[] spaceship_types = {
     { name = "idunno",      thrusters = {}, sprite_index = 7, cargo_capacity = 70 }
 };
 
+enum Agent_Behaviour {
+    follow; attack;
+}
 
 enum EntityType {
     none; // default no behaviour
@@ -145,7 +150,7 @@ enum EntityEvent {
 }
 
 struct Entity {
-    Entity* parent;
+    Entity* parent, target;
     void(Entity*) behaviour;
     void(Entity*, EntityEvent, void*) event;
 
@@ -182,9 +187,12 @@ void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
 }
 
 
-void kill_entity(Entity* e) { e.hp = 0; }
 bool is_dead(Entity* e) { return e.hp == 0; }
 
+void despawn(Entity* en) {
+    en.hp = 0;
+    if en.cargo  free(en.cargo);
+}
 
 // initializes entity data with sensible defaults, some based on sprite
 Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
@@ -219,8 +227,7 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type) {
 
 Entity* spawn_player() {
     let en = spawn_ship(vec2_zero, 0);
-    en.hp = player_max_hp;
-    en.team_id = player_team_id;
+    en.team_id = team_id_player;
 
     let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
     turret.entity_type = .turret;
@@ -231,9 +238,10 @@ Entity* spawn_player() {
 
 Entity* spawn_enemy(vec2 pos) {
     static uint32 ships_index = 0;
+    static uint32 team_id = 3;
 
     let en = spawn_ship(pos, ships_index++ % spaceship_types.length);
-    en.team_id = 1;
+    en.team_id = team_id++;
     en.behaviour = update_ai;
     return en;
 }
@@ -245,7 +253,7 @@ Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
     en.entity_type = .asteroid;
 
     en.tr.rot = random(global_seed++) * Pi;
-    en.team_id = 2;
+    en.team_id = team_id_asteroids;
     en.depth = 0.01;
 
     return en;
@@ -278,7 +286,7 @@ void thrust(Entity* e, vec2 dir) {
 
     let dt = deltatime();
 
-    let force = dir * 80_000; // N
+    let force = dir * e.mass * 80; // * 80_000; // N
     let imp = force * dt;     // Ns
     apply_impulse(e, imp);
 
@@ -286,8 +294,7 @@ void thrust(Entity* e, vec2 dir) {
     vec2 offset = {0, -sprite_size.y / 2};
     vec2 particle_pos = local2world(e.tr, offset);
 
-    // particles mass is hardcoded to 10kg
-    let P_vel = e.vel - imp / 10;
+    let P_vel = e.vel - dir * 8000 * dt;
     spawn_particle(particle_pos, P_vel, 0.5, 1, 0.5, 2.0);
 }
 
@@ -363,22 +370,17 @@ void update_entity(Entity* en) {
 
     switch en.entity_type {
         case .item: {
-            // const pickup_range = 3;
-            // let sq_dist = sqdist(en.tr.pos, drop.tr.pos);
-            // if sq_dist > pickup_range*pickup_range  return;
-
-
-            if player and !is_dead(player) and entity_intersects(en, player) {
-                if en.cooldown <= 0 {
-                    pickup(player, en);
-                }
+            if en.cooldown <= 0 {
+                let picker = closest_entity(en, EntityType.ship);
+                if picker and entity_intersects(en, picker) pickup(picker, en);
             }
+
         } break;
 
         default: break;
     }
 
-    vec4 color = vec4_one;
+    vec4 color = vec4_zero;
 
     for 0 .. list_length(bullets) {
         let bullet = bullets[it];
@@ -386,14 +388,13 @@ void update_entity(Entity* en) {
 
         float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
         if intersection < 0 {
-            color = {100, 100, 100, 100};
+            color = {1, 1, 1, 1};
             en.hp--;
-            en.vel = add(en.vel, mul(bullet.vel, 0.004));
+            apply_impulse(en, bullet.vel);
 
             if en == player  this_frame.player_took_damage = true;
 
-            list_unordered_remove(bullets, it as uint32);
-            it--;
+            list_unordered_remove(bullets, it-- as uint32);
 
             if is_dead(en) {
                 on_destroy(en);
@@ -402,21 +403,25 @@ void update_entity(Entity* en) {
         }
     }
 
-    draw_sprite(en.tr, en.depth, en.sprite, color);
+    draw_sprite(en.tr, en.depth, en.sprite, vec4_one, color);
 }
 
-void update_ai(Entity* e) {
+void update_ai(Entity* en) {
 
-    if !player return;
+    if en.target == null {
+        en.target = closest_entity(en, EntityType.ship);
+        if en.target == null  return;
+    }
 
-    turn_to(e, player.tr.pos);
-    let dist = length(sub(e.tr.pos, player.tr.pos));
 
-    if dist < 15*16  fire_gun(e);
+    turn_to(en, en.target.tr.pos);
+    let dist = length(sub(en.tr.pos, en.target.tr.pos));
+
+    if dist < 15*16  fire_gun(en);
 
     let t = dist - 5*16;
     t = t / abs(t);
-    thrust(e, { 0, t } as vec2);
+    thrust(en, { 0, t } as vec2);
 }
 
 float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
@@ -436,10 +441,30 @@ Entity* query_entity(vec2 pos) {
     return null;
 }
 
+Entity* closest_entity(Entity* self, EntityType et) {
+    float32 min_sqdist = 99999999;
+    Entity* result = null;
+
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        if en == self or is_dead(en) or en.entity_type != et  continue;
+
+        float32 sqd = sqdist(self.tr.pos, en.tr.pos);
+        if sqd < min_sqdist {
+            result = en;
+            min_sqdist = sqd;
+        }
+    }
+
+    return result;
+}
+
 void update_world() {
     let dt = deltatime();
 
     if player and is_dead(player)   player = null;
+
+    if key_pressed(GLFW_KEY_SPACE)  player = null;
 
     { // camera controlls:
         static vec2 target_cam_pos = {};
@@ -450,7 +475,6 @@ void update_world() {
 
         if player {
             target_cam_pos = player.tr.pos;
-
             target_cam_scale += length(player.vel) / 7;
         } else {
             target_cam_pos = target_cam_pos + Input.wasd * target_cam_zoom / 100;
@@ -494,7 +518,7 @@ void update_world() {
         let en = query_entity(mouse_world_pos);
         if en and en.entity_type == EntityType.ship {
             en.behaviour = null;
-            en.team_id = player_team_id;
+            en.team_id = team_id_player;
             player = en;
         }
     }
@@ -604,7 +628,7 @@ void draw_background(vec2 center) {
         tr.rot = random(seed++) * Pi;
         tr.scale = 1.0;
 
-        draw_sprite(tr, depth, sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32], vec4_one);
+        draw_sprite(tr, depth, sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32]);
     }
 }
 

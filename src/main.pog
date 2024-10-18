@@ -43,31 +43,38 @@ research audio implementations:
 */
 
 void apply_camera(Transform2D t) {
-    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "zoom"), t.scale);
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "cam_pos"), t.pos.x, t.pos.y);
-    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "cam_rot"), t.rot);
+    set_uniform("zoom", t.scale);
+    set_uniform("cam_pos", t.pos.x, t.pos.y);
+    set_uniform("cam_rot", t.rot);
 }
 
 void apply_transform(Transform2D t) { apply_transform(t, 0); }
 void apply_transform(Transform2D t, float32 depth) {
-    glUniform3f(glGetUniformLocation(default2d_shader.gl_handle, "entity_pos"), t.pos.x, t.pos.y, depth);
-    glUniform1f(glGetUniformLocation(default2d_shader.gl_handle, "entity_rot"), t.rot);
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), t.scale, t.scale);
+    set_uniform("entity_pos", t.pos.x, t.pos.y, depth);
+    set_uniform("entity_rot", t.rot);
+    set_uniform("entity_scale", t.scale, t.scale);
 }
 
-void apply_color(vec4 v) glUniform4f(glGetUniformLocation(default2d_shader.gl_handle, "color_factor"), v.x, v.y, v.z, v.w);
-void apply_entity_scale(vec2 scale) glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "entity_scale"), scale.x, scale.y);
+void apply_colors(vec4 factor, additive) {
+    set_uniform("color_factor", factor);
+    set_uniform("color_additive", additive);
+}
+
+void apply_entity_scale(vec2 scale) {
+    set_uniform("entity_scale", scale);
+}
 
 void apply_uv(vec2 uv_offset, uv_scale) {
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "uv_offset"), uv_offset.x, uv_offset.y);
-    glUniform2f(glGetUniformLocation(default2d_shader.gl_handle, "uv_scale"), uv_scale.x, uv_scale.y);
+    set_uniform("uv_offset", uv_offset);
+    set_uniform("uv_scale", uv_scale);
 }
 
-void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color) draw_texture(tr, depth, tex, {ivec2_zero, {tex.width-1, tex.height-1}} as Image_Boundingbox, color);
-void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbox bb, vec4 color) {
-    apply_color(color);
-    apply_transform(tr, depth);
+void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color_factor, color_additive) {
+    Image_Boundingbox bb = {ivec2_zero, {tex.width-1, tex.height-1}};
+    draw_texture(tr, depth, tex, bb, color_factor, color_additive);
+}
 
+void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbox bb, vec4 color_factor, color_additive) {
     vec2 uv_offset = {};
     vec2 uv_scale = {};
     ivec2 size = get_boundingbox_size(bb);
@@ -76,14 +83,20 @@ void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbo
     uv_offset.x = bb.min.x / tex.width as float32;
     uv_offset.y = bb.min.y / tex.height as float32;
 
+    apply_colors(color_factor, color_additive);
+    apply_transform(tr, depth);
     apply_entity_scale(make_vec(size.x * tr.scale, size.y * tr.scale));
     apply_uv(uv_offset, uv_scale);
     bind(tex);
     draw_elements(quad_db);
 }
 
-void draw_sprite(Transform2D tr, float32 depth, Sprite sprite, vec4 color) {
-    draw_texture(tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color);
+void draw_sprite(Transform2D tr, float32 depth, Sprite sprite) {
+    draw_sprite(tr, depth, sprite, vec4_one, vec4_zero);
+}
+
+void draw_sprite(Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
+    draw_texture(tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
 }
 
 
@@ -106,6 +119,13 @@ struct Sprite {
     Spritesheet* sheet;
     uint32 bb_index;
 }
+
+// TODO: this is a good idea. Should also just remove Spritesheet struct its not needed.
+// struct Sprite {
+//     vec2 uv_offset;
+//     vec2 uv_scale;
+//     uint32 tex;
+// }
 
 Image_Boundingbox get_sprite_boundingbox(Sprite sprite) return sprite.sheet.regions[sprite.bb_index];
 ivec2 get_sprite_size(Sprite s) return get_boundingbox_size(get_sprite_boundingbox(s));
