@@ -13,21 +13,27 @@ include "src/inventory.pog";
 */
 
 /* TODOs:
-    - cargo inventory
-        - asteroids drop minerals
-        - ships drop cargo hold
-
     - we probably need transparancy sorting because how else do we do alpha blending with transparent objects/particles/dustclouds
     - small velocity for sub-particles
     - dust particles for asteroid break
+    - dust particles floating in space
+
+    - several layers of fog/dust in background
+
+    - spaceship debrie on destruction
+    - spacestation
+
+    - asteroid cluster distribution
+    - shockwave
+
     - bullet impact particles
     - bullet particle trail
-    - spaceship debrie on destruction
-    - cargo capacity and health bar
-        - animate with exp_decay, flash and size increase
+
+    - missile
+    - passive health regen
+    - 
 
 Priority:
-    - asteroids break into smaller asteroids
 
 
 
@@ -306,7 +312,7 @@ void draw_gui() {
 
         pos.y += height * 1.5;
 
-        bar_player_health.progress = player.hp / player.max_hp as float32;
+        bar_player_health.progress = player.hp / player.max_hp;
         draw_bar(*bar_player_health, pos, 1.0);
     }
 }

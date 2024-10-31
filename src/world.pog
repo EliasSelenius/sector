@@ -99,7 +99,7 @@ void cleanup_pool(EntityPool* pool) {
 }
 
 
-const do_enemy_spawn = false;
+const do_enemy_spawn = true;
 const linear_drag = 0.99;
 
 EntityPool entity_pool = init_pool();
@@ -142,6 +142,7 @@ enum EntityType {
     ship; turret;
     station; asteroid;
     item;
+    missile;
 }
 
 enum EntityEvent {
@@ -151,10 +152,10 @@ enum EntityEvent {
 
 struct Entity {
     Entity* parent, target;
-    void(Entity*) behaviour;
     void(Entity*, EntityEvent, void*) event;
 
     EntityType entity_type;
+    Agent_Behaviour behaviour;
 
     with Transform2D tr;
     float32 depth;
@@ -165,7 +166,7 @@ struct Entity {
     float32 ang_vel;
     float32 mass;
 
-    uint32 hp, max_hp;
+    float32 hp, max_hp;
     uint32 team_id;
     uint32 cargo_capacity;
     float32 cooldown;
@@ -187,7 +188,7 @@ void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
 }
 
 
-bool is_dead(Entity* e) { return e.hp == 0; }
+bool is_dead(Entity* e) { return e.hp <= 0; }
 
 void despawn(Entity* en) {
     en.hp = 0;
@@ -211,7 +212,7 @@ Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
     return en;
 }
 
-Entity* spawn_ship(vec2 pos, uint32 ship_type) {
+Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
     let sst = spaceship_types[ship_type];
 
     let en = spawn_entity(*entity_pool, pos, sst.sprite);
@@ -219,20 +220,25 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type) {
 
     en.max_hp *= 6;
     en.hp = en.max_hp;
+    en.team_id = team_id;
 
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = sst.cargo_capacity;
+
+
+    if ship_type == 4 {
+        let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
+        turret.entity_type = .turret;
+        turret.parent = en;
+        turret.team_id = en.team_id;
+        turret.depth = -0.01;
+    }
+
     return en;
 }
 
 Entity* spawn_player() {
-    let en = spawn_ship(vec2_zero, 0);
-    en.team_id = team_id_player;
-
-    let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
-    turret.entity_type = .turret;
-    turret.parent = en;
-
+    let en = spawn_ship(vec2_zero, 0, team_id_player);
     return en;
 }
 
@@ -240,9 +246,7 @@ Entity* spawn_enemy(vec2 pos) {
     static uint32 ships_index = 0;
     static uint32 team_id = 3;
 
-    let en = spawn_ship(pos, ships_index++ % spaceship_types.length);
-    en.team_id = team_id++;
-    en.behaviour = update_ai;
+    let en = spawn_ship(pos, ships_index++ % spaceship_types.length, team_id++);
     return en;
 }
 
@@ -267,6 +271,17 @@ Entity* spawn_item(vec2 pos, Item item) {
     return en;
 }
 
+Entity* spawn_missile(Entity* launcher) {
+    let en = spawn_entity(*entity_pool, launcher.tr.pos, sprites_items[0]);
+    en.entity_type = .missile;
+    en.tr.rot = launcher.tr.rot;
+    en.team_id = launcher.team_id;
+    en.cooldown = 4;
+}
+
+
+
+
 void accelerate(Entity* e, vec2 acc) {
     e.vel = add(e.vel, mul(acc, deltatime()));
 }
@@ -288,6 +303,10 @@ void thrust(Entity* e, vec2 dir) {
 
     let force = dir * e.mass * 80; // * 80_000; // N
     let imp = force * dt;     // Ns
+
+    // TODO: hack!
+    if e.entity_type == EntityType.missile  imp = imp * 2;
+
     apply_impulse(e, imp);
 
     let sprite_size = get_sprite_size(e.sprite);
@@ -324,10 +343,10 @@ void on_destroy(Entity* en) {
 
     switch en.entity_type {
         case .ship: {
-            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
         } break;
         case .turret: {
-            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
         } break;
 
         case .station: break;
@@ -348,10 +367,14 @@ void on_destroy(Entity* en) {
                 }
             }
 
-            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 7*16);
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
         } break;
 
         case .item: {
+        } break;
+
+        case .missile: {
+            spawn_explosion((en.collider_radius * 10) as uint32, en.tr.pos, en.vel, 150);
         } break;
     }
 }
@@ -364,17 +387,47 @@ void update_entity(Entity* en) {
     en.ang_vel *= 0.99;
 
     if en.cooldown > 0  en.cooldown -= dt;
-    if en.behaviour  en.behaviour(en);
-
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
     switch en.entity_type {
+
+        case .ship: {
+            if en != player   update_ai(en);
+        } break;
+
         case .item: {
             if en.cooldown <= 0 {
                 let picker = closest_entity(en, EntityType.ship);
                 if picker and entity_intersects(en, picker) pickup(picker, en);
             }
 
+        } break;
+
+        case .turret: {
+            if en.parent and en.parent.target {
+                turn_to(en, en.parent.target.tr.pos);
+                fire_gun(en);
+            }
+        } break;
+
+        case .missile: {
+
+            if en.target {
+                turn_to(en, en.target.tr.pos);
+            } else {
+                let closest = closest_entity(en, EntityType.ship);
+                if closest.team_id != en.team_id  en.target = closest;
+            }
+
+            thrust(en, vec2_unit_y);
+
+            let inter_en = first_intersecting_entity(en, EntityType.ship);
+            if inter_en and inter_en.team_id != en.team_id {
+                inter_en.hp -= 10;
+                en.hp = 0;
+            }
+
+            if en.cooldown <= 0  en.hp = 0;
         } break;
 
         default: break;
@@ -396,14 +449,13 @@ void update_entity(Entity* en) {
 
             list_unordered_remove(bullets, it-- as uint32);
 
-            if is_dead(en) {
-                on_destroy(en);
-                break;
-            }
+            if is_dead(en) break;
         }
     }
 
     draw_sprite(en.tr, en.depth, en.sprite, vec4_one, color);
+
+    if is_dead(en) on_destroy(en);
 }
 
 void update_ai(Entity* en) {
@@ -415,13 +467,25 @@ void update_ai(Entity* en) {
 
 
     turn_to(en, en.target.tr.pos);
-    let dist = length(sub(en.tr.pos, en.target.tr.pos));
+    let dist = circle_dist(en, en.target);
 
     if dist < 15*16  fire_gun(en);
 
-    let t = dist - 5*16;
-    t = t / abs(t);
-    thrust(en, { 0, t } as vec2);
+    float32 min_dist = 80;
+    float32 max_dist = 200;
+
+    vec2 thrust_dir = {};
+
+    if dist < min_dist {
+        thrust_dir.y = -1;
+    } else if dist > max_dist {
+        thrust_dir.y = 1;
+    } else {
+        let denom = abs(en.target.vel.x);
+        thrust_dir.x = denom == 0.0 ? 0.0 : -en.target.vel.x / denom;
+    }
+
+    thrust(en, thrust_dir);
 }
 
 float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
@@ -430,7 +494,8 @@ float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
     return len - r;
 }
 
-float32 entity_intersects(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius) < 0;
+float32 circle_dist(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius);
+float32 entity_intersects(Entity* e0, e1) return circle_dist(e0, e1) < 0;
 
 Entity* query_entity(vec2 pos) {
     for 0 .. entity_pool.count {
@@ -457,6 +522,17 @@ Entity* closest_entity(Entity* self, EntityType et) {
     }
 
     return result;
+}
+
+Entity* first_intersecting_entity(Entity* self, EntityType et) {
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        if en == self or is_dead(en) or en.entity_type != et  continue;
+
+        if entity_intersects(self, en) return en;
+    }
+
+    return null;
 }
 
 void update_world() {
@@ -492,6 +568,9 @@ void update_world() {
         thrust(player, Input.wasd);
         turn_to(player, mouse_world_pos);
         if mouse(Left_Mouse) fire_gun(player);
+        if mouse_pressed(Right_Mouse) {
+            spawn_missile(player);
+        }
 
         if key_pressed('Q') drop_cargo(player, 5);
 
@@ -517,8 +596,6 @@ void update_world() {
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
         let en = query_entity(mouse_world_pos);
         if en and en.entity_type == EntityType.ship {
-            en.behaviour = null;
-            en.team_id = team_id_player;
             player = en;
         }
     }
@@ -670,7 +747,7 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
 
 
     // init interactable asteroids
-    for 0 .. chunk_size*chunk_size / 10_000 {
+    for 0 .. chunk_size*chunk_size / 30_000 {
 
         uint32 asteroid_index = (random01(seed++) * sprites_asteroids_count) as uint32;
         vec2 pos = { random(seed++) * half, random(seed++) * half };
