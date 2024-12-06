@@ -1,42 +1,98 @@
 
 
+const color_fire  = {1, 173.0 / 255.0, 10.0 / 255.0, 1} as vec4;
+const color_smoke = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0, 1} as vec4;
+const color_dust  = color_to_vec4(rgba(0x604040FF));
+
+const ParticleFlag_SubEmitter = 1;
+
 struct Particle {
-    vec2 pos;
-    vec2 vel;
-    float32 rot;
-    float32 size;
+    vec2 pos, vel;
+    float32 rot, ang_vel;
+
+    float32 lifetime, elapsed_lifetime;
+    float32 size_start, size_end;
+    vec4 color_start, color_end;
+
     Texture2D tex;
-    float32 life_time;
+
+    uint32 flags;
 }
 
 
 // TODO: use arenas for this so reallocations dont have to ocurre
-Particle* particles = list_create(sizeof Particle);
-Particle* sub_particles = list_create(sizeof Particle);
-
+Particle[..] particles = list_create(sizeof Particle);
 
 void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, 0.5, 2, 0.5, 3.0, particle);
 void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time) spawn_particle(pos, vel, min_size, max_size, min_time, max_time, particle);
 void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time, Texture2D tex) {
     Particle p = {};
+
+    p.color_start = color_fire;
+    p.color_end = color_smoke;
+    p.color_end.w = 0;
+
+    p.flags |= ParticleFlag_SubEmitter;
+
     p.pos = pos;
     p.vel = vel;
     p.rot = random(global_seed++) * Pi;
-    p.size = random_range(global_seed++, min_size, max_size);
+
+    p.size_start = random_range(global_seed++, min_size, max_size);
+    p.size_end = 0;
+
     p.tex = tex;
-    p.life_time = random_range(global_seed++, min_time, max_time);
+    p.lifetime = random_range(global_seed++, min_time, max_time);
+    list_add(*particles, *p);
+}
+
+Particle make_particle(vec2 pos, vel, float32 size, rot, ang_vel, lifetime, vec4 color, uint32 flags) {
+    Particle p = {};
+
+    p.color_start = color;
+    p.color_end = p.color_start;
+    p.color_end.w = 0;
+
+    p.flags = flags;
+
+    p.pos = pos;
+    p.vel = vel;
+    p.rot = rot;
+    p.ang_vel = ang_vel;
+
+    p.size_start = size;
+    p.size_end = 0;
+
+    p.tex = particle;
+    p.lifetime = lifetime;
+
+    return p;
+}
+
+void spawn_particle(Particle p) {
     list_add(*particles, *p);
 }
 
 void spawn_sub_particle(Particle* part) {
+    spawn_disipating_dust_particle(part.pos, part.size_start * 0.90, 10, color_smoke);
+}
+
+void spawn_disipating_dust_particle(vec2 pos, float32 size, max_vel_magnitude, vec4 color) {
     Particle p = {};
-    p.pos = part.pos;
-    p.vel = vec2_zero;
+    p.color_start = color;
+    p.color_end = vec4_zero;
+    p.color_end.w = 0;
+
+    p.pos = pos;
+    p.vel = random_vec2(max_vel_magnitude);
     p.rot = random(global_seed++) * Pi;
-    p.size = part.size * 0.90;
-    p.tex = part.tex;
-    p.life_time = part.life_time * 0.5;
-    list_add(*sub_particles, *p);
+
+    p.size_end = size;
+    p.size_start = p.size_end * 0.1;
+
+    p.tex = particle;
+    p.lifetime = 0.2 + random01() * 2;
+    list_add(*particles, *p);
 }
 
 vec2 shock_wave_force(vec2 shock_pos, obj_pos, float32 shock_pressure) {
@@ -52,13 +108,7 @@ void spawn_shockwave(vec2 pos, float32 pressure) {
     for 0 .. list_length(particles) {
         let p = *particles[it];
         let force = shock_wave_force(pos, p.pos, pressure);
-        p.vel = add(p.vel, mul(force, 1.0 / p.size));
-    }
-
-    for 0 .. list_length(sub_particles) {
-        let p = *sub_particles[it];
-        let force = shock_wave_force(pos, p.pos, pressure);
-        p.vel = add(p.vel, mul(force, 1.0 / p.size));
+        p.vel = p.vel + force;
     }
 }
 
@@ -74,44 +124,45 @@ void spawn_explosion(uint32 count, vec2 pos, vel, float32 spread) {
 
 void update_particles() {
     disable_depth_test();
-
-    void process_particle_pool(Particle* parts, vec3 start_color, end_color, bool has_sub_emitter) {
-        let dt = deltatime();
-        let count = list_length(parts);
-        for uint32 i : 0 .. count {
-            let p = *parts[i];
-            p.pos = add(p.pos, mul(p.vel, dt));
-            p.vel = mul(p.vel, 0.99);
-            p.size *= 0.99;
-            p.life_time -= dt;
-
-
-            vec4 color = make_vec(lerp(p.life_time, end_color, start_color), p.life_time);
-            Transform2D tr = {
-                pos = p.pos,
-                rot = p.rot,
-                scale = p.size
-            };
-            draw_texture(tr, 0, p.tex, color, vec4_zero);
-
-            if has_sub_emitter {
-                spawn_sub_particle(p);
-            }
-
-            if p.life_time < 0 {
-                list_unordered_remove(parts, i);
-                i--;
-                count--;
-            }
-        }
-    }
-
-    const fire_color = {1, 173.0 / 255.0, 10.0 / 255.0} as vec3;
-    const smoke_color = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0} as vec3;
+    enable_additive_blending();
 
     static uint32 frame_count = 0;
     bool sub = (frame_count++ % 5) == 0;
 
-    process_particle_pool(sub_particles, smoke_color, smoke_color, false);
-    process_particle_pool(particles, fire_color, smoke_color, sub);
+    let dt = deltatime();
+    uint32 count = list_length(particles);
+    for uint32 i : 0 .. count {
+        let p = *particles[i];
+        p.pos = p.pos + p.vel * dt;
+        p.vel = p.vel * 0.99;
+        // p.rot += p.ang_vel * dt;
+
+        float32 t = clamp(p.elapsed_lifetime / p.lifetime, 0, 1);
+        vec4 color = lerp(t, p.color_start, p.color_end);
+        float32 size = lerp(t, p.size_start, p.size_end);
+
+        Transform2D tr = { pos = p.pos, rot = p.rot, scale = size };
+        draw_texture(tr, 0, p.tex, color, vec4_zero);
+
+        p.elapsed_lifetime += dt;
+
+        if sub and p.flags & ParticleFlag_SubEmitter != 0 {
+            spawn_sub_particle(p);
+        }
+    }
+
+    for int32 i = count-1, i >= 0, i-- {
+        let p = *particles[i];
+        if p.elapsed_lifetime >= p.lifetime {
+            list_unordered_remove(particles, i);
+        }
+    }
+
+    // for uint32 i : 0 .. count {
+    //     let p = *particles[i];
+    //     if p.elapsed_lifetime >= p.lifetime {
+    //         list_unordered_remove(particles, i);
+    //         count--;
+    //     }
+    // }
 }

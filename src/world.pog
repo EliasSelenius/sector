@@ -145,14 +145,8 @@ enum EntityType {
     missile;
 }
 
-enum EntityEvent {
-    spawned; despawned;
-    damage_taken;
-}
-
 struct Entity {
     Entity* parent, target;
-    void(Entity*, EntityEvent, void*) event;
 
     EntityType entity_type;
     Agent_Behaviour behaviour;
@@ -277,6 +271,8 @@ Entity* spawn_missile(Entity* launcher) {
     en.tr.rot = launcher.tr.rot;
     en.team_id = launcher.team_id;
     en.cooldown = 4;
+    en.vel = launcher.vel;
+    return en;
 }
 
 
@@ -358,6 +354,10 @@ void on_destroy(Entity* en) {
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
+
+                for 0 .. (en.collider_radius * 5) as uint32
+                    spawn_disipating_dust_particle(en.tr.pos, en.collider_radius * (0.1 + random01()*0.1), 50, color_dust);
+
             } else {
                 let drop_count = random_range(global_seed++, 0, 7) as uint32;
                 for 0 .. drop_count {
@@ -365,9 +365,10 @@ void on_destroy(Entity* en) {
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
+
+                spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
             }
 
-            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
         } break;
 
         case .item: {
@@ -385,6 +386,9 @@ void update_entity(Entity* en) {
     en.tr.rot += en.ang_vel * dt;
     en.vel = en.vel * linear_drag;
     en.ang_vel *= 0.99;
+
+    float32 hp_regen_rate = 0.2; // hp/s
+    en.hp = clamp(en.hp + hp_regen_rate*dt, 0, en.max_hp);
 
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
@@ -581,6 +585,19 @@ void update_world() {
         // pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     } else {
         // player = spawn_player();
+
+        void line(char* text, float32 line_num) {
+            string str = make_string(text);
+            const text_size = 0.03;
+            vec2 pos = {0, -0.4};
+            pos.x -= str.length * text_size / 4;
+            pos.y -= text_size * line_num;
+            draw_text(pos, text_size, str, Gray);
+        }
+
+        line("Right Mouse Click to spawn ship", 0);
+        line("Hold Shift and Left Mouse Click to take control of the ship", 1.5);
+
     }
 
 
@@ -674,7 +691,11 @@ void update_world() {
 
         // draw_texture(tr, 0.0, projectile, vec4_one);
 
-        bullet.pos = add(bullet.pos, mul(bullet.vel, deltatime()));
+        Color color = rgba(0xFF6A00FF);
+        Particle p = make_particle(bullet.pos, random_vec2(10), 1, random(global_seed++) * Pi, 1, 0.5, color_to_vec4(color), 0);
+        spawn_particle(p);
+
+        bullet.pos = bullet.pos + bullet.vel * dt;
     }
 
 
