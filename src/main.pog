@@ -14,27 +14,21 @@ include "src/inventory.pog";
 
 /* TODOs:
     - we probably need transparancy sorting because how else do we do alpha blending with transparent objects/particles/dustclouds
-    - small velocity for sub-particles
-    - dust particles for asteroid break
     - dust particles floating in space
 
     - several layers of fog/dust in background
 
     - spaceship debrie on destruction
-    - spacestation
 
     - asteroid cluster distribution
     - shockwave
 
     - bullet impact particles
-    - bullet particle trail
 
-    - missile
-    - passive health regen
-    - 
 
 Priority:
-
+    - spacestation
+    - drop cargo at spacestation -> cargo turns into money -> money buys bigger ships
 
 
 
@@ -81,6 +75,10 @@ void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color_facto
 }
 
 void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbox bb, vec4 color_factor, color_additive) {
+    draw_texture(quad_db, tr, depth, tex, bb, color_factor, color_additive);
+}
+
+void draw_texture(DrawBuffers db, Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbox bb, vec4 color_factor, color_additive) {
     vec2 uv_offset = {};
     vec2 uv_scale = {};
     ivec2 size = get_boundingbox_size(bb);
@@ -94,15 +92,19 @@ void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbo
     apply_entity_scale(make_vec(size.x * tr.scale, size.y * tr.scale));
     apply_uv(uv_offset, uv_scale);
     bind(tex);
-    draw_elements(quad_db);
+    draw_elements(db);
 }
 
 void draw_sprite(Transform2D tr, float32 depth, Sprite sprite) {
     draw_sprite(tr, depth, sprite, vec4_one, vec4_zero);
 }
 
+void draw_sprite(DrawBuffers db, Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
+    draw_texture(db, tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
+}
+
 void draw_sprite(Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
-    draw_texture(tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
+    draw_texture(quad_db, tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
 }
 
 
@@ -146,6 +148,8 @@ Sprite get_sprite(with Spritesheet* sheet, uint32 index) {
 
 
 DrawBuffers quad_db;
+const debris_count = 16;
+DrawBuffers[debris_count] db_debris;
 
 Texture2D projectile;
 Texture2D particle;
@@ -159,6 +163,7 @@ Sprite[3] sprites_asteroids;
 Sprite[2] sprites_items;
 
 Sprite sprite_turret;
+Sprite sprite_spacestation;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -204,7 +209,8 @@ void loadassets() {
         sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
-    sprite_turret = get_sprite(*spritesheet, 8);
+    sprite_turret = get_sprite(*spritesheet, 9);
+    sprite_spacestation = get_sprite(*spritesheet, 15);
 }
 
 void on_event(AppEvent event, AppEventData data) switch event {
@@ -220,18 +226,46 @@ void main() {
     quad_db = create_draw_buffers(sizeof vertex2D, vertex2D_attribs);
     {
         float32 p = 0.5;
-        vertex2D[] verts = {
-            {-p, -p, 0, 0, White},
-            { p, -p, 1, 0, White},
-            { p,  p, 1, 1, White},
-            {-p,  p, 0, 1, White}
-        };
+        vertex2D[] verts = { {-p, -p, 0, 0, White},
+                             { p, -p, 1, 0, White},
+                             { p,  p, 1, 1, White},
+                             {-p,  p, 0, 1, White} };
 
-        uint32[] inds = {
-            0, 1, 2,
-            0, 2, 3
-        };
+        uint32[] inds = { 0, 1, 2,
+                          0, 2, 3 };
+
         update_buffers(*quad_db, verts, inds);
+    }
+
+    for 0 .. debris_count {
+        db_debris[it] = create_draw_buffers(sizeof vertex2D, vertex2D_attribs);
+
+        vec2 clamp_to_square_edge(float32 x, y) {
+            if abs(x) < abs(y) {
+                y /= abs(y);
+            } else {
+                x /= abs(x);
+            }
+
+            return make_vec(x, y) * 0.5;
+        }
+
+        vertex2D[3] vs;
+        vs[0] = {0, 0, 0.5, 0.5, White};
+
+        let t = it as float32 / debris_count * Tau;
+        vec2 p = clamp_to_square_edge(cos(t), sin(t));
+        vs[1] = {p, p + vec2_one*0.5, White};
+
+        t = (it+1) as float32 / debris_count * Tau;
+        p = clamp_to_square_edge(cos(t), sin(t));
+        vs[2] = {p, p + vec2_one*0.5, White};
+
+        uint32[] inds = { 0, 1, 2 };
+        vertex2D[] verts;
+        verts.data = *vs;
+        verts.length = 3;
+        update_buffers(*db_debris[it], verts, inds);
     }
 
     set_clear_color(rgba(0x0a0a0aff));

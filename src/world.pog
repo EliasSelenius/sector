@@ -126,10 +126,14 @@ struct SpaceshipType {
 
 SpaceshipType[] spaceship_types = {
     { name = "og",          thrusters = {}, sprite_index = 4, cargo_capacity = 40 },
-    { name = "new",         thrusters = {}, sprite_index = 3, cargo_capacity = 50 },
-    { name = "large_agile", thrusters = {}, sprite_index = 5, cargo_capacity = 35 },
-    { name = "moth",        thrusters = {}, sprite_index = 6, cargo_capacity = 150 },
-    { name = "idunno",      thrusters = {}, sprite_index = 7, cargo_capacity = 70 }
+    { name = "small_cargo", thrusters = {}, sprite_index = 5, cargo_capacity = 60 },
+    { name = "small_moth",  thrusters = {}, sprite_index = 6, cargo_capacity = 40 },
+    { name = "new",         thrusters = {}, sprite_index = 7, cargo_capacity = 50 },
+    { name = "large_agile", thrusters = {}, sprite_index = 8, cargo_capacity = 35 },
+    { name = "idunno",      thrusters = {}, sprite_index = 10, cargo_capacity = 70 },
+    { name = "moth",        thrusters = {}, sprite_index = 11, cargo_capacity = 120 },
+    { name = "big",         thrusters = {}, sprite_index = 12, cargo_capacity = 150 },
+    { name = "cool",        thrusters = {}, sprite_index = 13, cargo_capacity = 55 }
 };
 
 enum Agent_Behaviour {
@@ -138,11 +142,12 @@ enum Agent_Behaviour {
 
 enum EntityType {
     none; // default no behaviour
-    ready_for_reuse;
+    ready_for_reuse; // dead entities will be marked ready for reuse
     ship; turret;
     station; asteroid;
     item;
     missile;
+    debris;
 }
 
 struct Entity {
@@ -160,6 +165,7 @@ struct Entity {
     float32 ang_vel;
     float32 mass;
 
+    uint32 level;
     float32 hp, max_hp;
     uint32 team_id;
     uint32 cargo_capacity;
@@ -220,7 +226,7 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
     en.cargo_capacity = sst.cargo_capacity;
 
 
-    if ship_type == 4 {
+    if ship_type == 5 {
         let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
         turret.entity_type = .turret;
         turret.parent = en;
@@ -270,7 +276,7 @@ Entity* spawn_missile(Entity* launcher) {
     en.entity_type = .missile;
     en.tr.rot = launcher.tr.rot;
     en.team_id = launcher.team_id;
-    en.cooldown = 4;
+    en.cooldown = 7;
     en.vel = launcher.vel;
     return en;
 }
@@ -326,9 +332,8 @@ void fire_gun(Entity* e) {
         let disp = up(e.tr);
         disp.x *= -1;
 
-        let vel = add(mul(disp, 50*16), e.vel);
-        vel = add(vel, random_vec2(3*16));
-        spawn_bullet(add(e.tr.pos, disp), vel, e.team_id);
+        let vel = e.vel + disp*800 + random_vec2(48);
+        spawn_bullet(e.tr.pos + disp*e.collider_radius, vel, e.team_id);
         e.cooldown = 0.25;
     }
 }
@@ -340,12 +345,28 @@ void on_destroy(Entity* en) {
     switch en.entity_type {
         case .ship: {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
+
+            for 0 .. debris_count {
+                let debris = spawn_entity(*entity_pool, en.tr.pos, en.sprite);
+                debris.entity_type = .debris;
+                debris.level = it;
+
+                let t = (it as float32 + 0.5) / debris_count * Tau;
+                let vel = rotate_vec(make_vec(cosf(t), sinf(t)), en.tr.rot);
+                debris.vel = en.vel + vel * random01(global_seed++)*20;
+                debris.ang_vel = random(global_seed++) * 0.6;
+                debris.tr.rot = en.tr.rot;
+            }
         } break;
+
         case .turret: {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
         } break;
 
-        case .station: break;
+        case .station: {
+            spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
+        } break;
+
         case .asteroid: {
             let asteroid_index = en.sprite.bb_index; // TODO: hack! bb_index happens to be equal the asteroid_index. Maybe Entity could have a uint32 level; that would be an agnostic field
             if asteroid_index {
@@ -457,7 +478,8 @@ void update_entity(Entity* en) {
         }
     }
 
-    draw_sprite(en.tr, en.depth, en.sprite, vec4_one, color);
+    DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : quad_db;
+    draw_sprite(db, en.tr, en.depth, en.sprite, vec4_one, color);
 
     if is_dead(en) on_destroy(en);
 }
@@ -619,8 +641,9 @@ void update_world() {
 
     draw_background(camera.pos);
 
-    if player {
-        ivec2 chunk_coord = get_chunk_coord(player.tr.pos);
+    if true {
+        // ivec2 chunk_coord = get_chunk_coord(player.tr.pos);
+        ivec2 chunk_coord = get_chunk_coord(camera.pos);
 
         ivec2[] chunk_coord_offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
         Chunk*[] chunks = {*chunk_1, *chunk_2, *chunk_3, *chunk_4};
@@ -765,6 +788,12 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
 
     const half = chunk_size / 2;
     vec2 chunk_pos = make_vec(sub(mul(coord, chunk_size), { half, half } as ivec2));
+
+
+    if random(seed++) < 0 {
+        let ss = spawn_entity(*chunk.entity_pool, chunk_pos, sprite_spacestation);
+        ss.entity_type = .station;
+    }
 
 
     // init interactable asteroids
