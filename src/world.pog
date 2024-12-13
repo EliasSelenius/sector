@@ -148,6 +148,7 @@ enum EntityType {
     item;
     missile;
     debris;
+    shockwave;
 }
 
 struct Entity {
@@ -160,6 +161,7 @@ struct Entity {
     float32 depth;
 
     Sprite sprite;
+    vec4 color_factor;
 
     vec2 vel;
     float32 ang_vel;
@@ -202,11 +204,12 @@ Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
     en.tr.pos = pos;
     en.tr.scale = 1;
     en.sprite = sprite;
+    en.color_factor = vec4_one;
 
-    let size = get_boundingbox_size(get_sprite_boundingbox(sprite));
+    let size = get_sprite_pixel_size(sprite);
     en.collider_radius = min(size.x, size.y) * en.tr.scale / 2;
 
-    en.max_hp = (size.x + size.y) / 20;
+    en.max_hp = max((size.x + size.y) / 20, 1);
     en.hp = en.max_hp;
     en.mass = size.x * size.y;
     return en;
@@ -255,6 +258,7 @@ Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
     let sprite = sprites_asteroids[asteroid_index];
     let en = spawn_entity(pool, pos, sprite);
     en.entity_type = .asteroid;
+    en.level = asteroid_index;
 
     en.tr.rot = random(global_seed++) * Pi;
     en.team_id = team_id_asteroids;
@@ -281,7 +285,14 @@ Entity* spawn_missile(Entity* launcher) {
     return en;
 }
 
-
+Entity* spawn_shockwave(vec2 pos) {
+    let en = spawn_entity(*entity_pool, pos, sprite_particle);
+    en.entity_type = .shockwave;
+    en.tr.scale = 0;
+    en.cooldown = 1;
+    en.depth = 0.02;
+    return en;
+}
 
 
 void accelerate(Entity* e, vec2 acc) {
@@ -311,7 +322,7 @@ void thrust(Entity* e, vec2 dir) {
 
     apply_impulse(e, imp);
 
-    let sprite_size = get_sprite_size(e.sprite);
+    let sprite_size = get_sprite_pixel_size(e.sprite);
     vec2 offset = {0, -sprite_size.y / 2};
     vec2 particle_pos = local2world(e.tr, offset);
 
@@ -368,10 +379,9 @@ void on_destroy(Entity* en) {
         } break;
 
         case .asteroid: {
-            let asteroid_index = en.sprite.bb_index; // TODO: hack! bb_index happens to be equal the asteroid_index. Maybe Entity could have a uint32 level; that would be an agnostic field
-            if asteroid_index {
+            if en.level {
                 for 0 .. 2 {
-                    let a = spawn_asteroid(*entity_pool, en.tr.pos, asteroid_index - 1);
+                    let a = spawn_asteroid(*entity_pool, en.tr.pos, en.level - 1);
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
@@ -455,6 +465,12 @@ void update_entity(Entity* en) {
             if en.cooldown <= 0  en.hp = 0;
         } break;
 
+        case .shockwave: {
+            en.tr.scale += 30 * dt;
+            en.color_factor.w = clamp(en.cooldown, 0, 1);
+            if en.cooldown <= 0 en.hp = 0;
+        } break;
+
         default: break;
     }
 
@@ -479,7 +495,7 @@ void update_entity(Entity* en) {
     }
 
     DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : quad_db;
-    draw_sprite(db, en.tr, en.depth, en.sprite, vec4_one, color);
+    draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, color);
 
     if is_dead(en) on_destroy(en);
 }
@@ -624,7 +640,8 @@ void update_world() {
 
 
     if mouse_pressed(Right_Mouse) {
-        let e = spawn_enemy(mouse_world_pos);
+        // let e = spawn_enemy(mouse_world_pos);
+        let e = spawn_shockwave(mouse_world_pos);
         // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
 
         // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);

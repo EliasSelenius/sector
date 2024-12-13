@@ -25,6 +25,7 @@ include "src/inventory.pog";
 
     - bullet impact particles
 
+    - when spawning bullet particle trail we should interpolate inbetween frames for better trail
 
 Priority:
     - spacestation
@@ -70,8 +71,7 @@ void apply_uv(vec2 uv_offset, uv_scale) {
 }
 
 void draw_texture(Transform2D tr, float32 depth, Texture2D tex, vec4 color_factor, color_additive) {
-    Image_Boundingbox bb = {ivec2_zero, {tex.width-1, tex.height-1}};
-    draw_texture(tr, depth, tex, bb, color_factor, color_additive);
+    draw_texture(quad_db, tr, depth, tex, vec2_zero, vec2_one, color_factor, color_additive);
 }
 
 void draw_texture(Transform2D tr, float32 depth, Texture2D tex, Image_Boundingbox bb, vec4 color_factor, color_additive) {
@@ -87,24 +87,31 @@ void draw_texture(DrawBuffers db, Transform2D tr, float32 depth, Texture2D tex, 
     uv_offset.x = bb.min.x / tex.width as float32;
     uv_offset.y = bb.min.y / tex.height as float32;
 
+    draw_texture(db, tr, depth, tex, uv_offset, uv_scale, color_factor, color_additive);
+}
+
+void draw_texture(DrawBuffers db, Transform2D tr, float32 depth, Texture2D tex, vec2 uv_offset, uv_scale, vec4 color_factor, color_additive) {
     apply_colors(color_factor, color_additive);
     apply_transform(tr, depth);
-    apply_entity_scale(make_vec(size.x * tr.scale, size.y * tr.scale));
+    apply_entity_scale(uv_scale * make_vec(tex.width, tex.height) * tr.scale);
     apply_uv(uv_offset, uv_scale);
     bind(tex);
     draw_elements(db);
 }
+
+
+
 
 void draw_sprite(Transform2D tr, float32 depth, Sprite sprite) {
     draw_sprite(tr, depth, sprite, vec4_one, vec4_zero);
 }
 
 void draw_sprite(DrawBuffers db, Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
-    draw_texture(db, tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
+    draw_texture(db, tr, depth, sprite.tex, sprite.uv_offset, sprite.uv_scale, color_factor, color_additive);
 }
 
 void draw_sprite(Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
-    draw_texture(quad_db, tr, depth, sprite.sheet.texture, get_sprite_boundingbox(sprite), color_factor, color_additive);
+    draw_texture(quad_db, tr, depth, sprite.tex, sprite.uv_offset, sprite.uv_scale, color_factor, color_additive);
 }
 
 
@@ -124,35 +131,37 @@ struct Spritesheet {
 }
 
 struct Sprite {
-    Spritesheet* sheet;
-    uint32 bb_index;
+    vec2 uv_offset;
+    vec2 uv_scale;
+    Texture2D tex;
 }
-
-// TODO: this is a good idea. Should also just remove Spritesheet struct its not needed.
-// struct Sprite {
-//     vec2 uv_offset;
-//     vec2 uv_scale;
-//     uint32 tex;
-// }
-
-Image_Boundingbox get_sprite_boundingbox(Sprite sprite) return sprite.sheet.regions[sprite.bb_index];
-ivec2 get_sprite_size(Sprite s) return get_boundingbox_size(get_sprite_boundingbox(s));
 
 Sprite get_sprite(with Spritesheet* sheet, uint32 index) {
     Sprite s = {};
-    s.sheet = sheet;
-    s.bb_index = index;
+    s.tex = sheet.texture;
+
+    let bb = sheet.regions[index];
+    ivec2 size = get_boundingbox_size(bb);
+    s.uv_scale.x = size.x / s.tex.width as float32;
+    s.uv_scale.y = size.y / s.tex.height as float32;
+    s.uv_offset.x = bb.min.x / s.tex.width as float32;
+    s.uv_offset.y = bb.min.y / s.tex.height as float32;
+
     return s;
 }
 
+Sprite make_sprite(Texture2D tex) {
+    return { uv_offset = vec2_zero, uv_scale = vec2_one, tex = tex };
+}
 
+ivec2 get_sprite_pixel_size(Sprite s) {
+    return make_ivec(s.uv_scale * make_vec(s.tex.width, s.tex.height));
+}
 
 DrawBuffers quad_db;
-const debris_count = 16;
+const debris_count = 6;
 DrawBuffers[debris_count] db_debris;
 
-Texture2D projectile;
-Texture2D particle;
 
 Spritesheet spritesheet;
 Spritesheet spritesheet_items;
@@ -164,6 +173,11 @@ Sprite[2] sprites_items;
 
 Sprite sprite_turret;
 Sprite sprite_spacestation;
+
+Texture2D projectile;
+Texture2D particle;
+Sprite sprite_projectile;
+Sprite sprite_particle;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -180,6 +194,8 @@ void loadassets() {
     projectile = load_texture2D("assets/proj.bmp");
     particle   = load_texture2D("assets/particle.bmp");
 
+    set_filter(particle, TextureFilter.linear);
+    // set_wrap_mode(particle, TextureWrapMode.clamp_to_edge);
 
     Spritesheet load_spritesheet(char* file_name) {
         let image = load_bitmap(file_name);
@@ -211,6 +227,9 @@ void loadassets() {
 
     sprite_turret = get_sprite(*spritesheet, 9);
     sprite_spacestation = get_sprite(*spritesheet, 15);
+
+    sprite_projectile = make_sprite(projectile);
+    sprite_particle = make_sprite(particle);
 }
 
 void on_event(AppEvent event, AppEventData data) switch event {
