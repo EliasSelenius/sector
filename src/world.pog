@@ -181,11 +181,15 @@ struct Entity {
 struct Bullet {
     vec2 pos;
     vec2 vel;
+    float32 life_time;
     uint32 team_id;
 }
 
 void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
-    Bullet p = {pos, vel, team_id};
+    Bullet p = {};
+    p.pos = pos;
+    p.vel = vel;
+    p.team_id = team_id;
     list_add(*bullets, *p);
 }
 
@@ -339,13 +343,31 @@ void turn_to(Entity* e, vec2 target) {
 }
 
 void fire_gun(Entity* e) {
-    if e.cooldown <= 0 {
-        let disp = up(e.tr);
-        disp.x *= -1;
+    const bullet_muzzle_speed = 800;
+    const bullet_random_muzzle_speed = 48;
 
-        let vel = e.vel + disp*800 + random_vec2(48);
-        spawn_bullet(e.tr.pos + disp*e.collider_radius, vel, e.team_id);
+    if e.cooldown <= 0 {
+        let dir = up(e.tr);
+        dir.x *= -1;
+
+        let vel = e.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
+        let pos = e.tr.pos + dir * e.collider_radius;
+        spawn_bullet(pos, vel, e.team_id);
         e.cooldown = 0.25;
+
+        uint32 num_p = 10;
+        for 0 .. num_p {
+
+            vec2    p_vel = e.vel + dir*100 + random_vec2(10);
+            float32 size = 0.5;
+            float32 rot = random(global_seed++) * Pi;
+            float32 ang_vel = 1;
+            float32 life_time = 1;
+            vec4    color = color_to_vec4(rgba(0xFF6A00FF));
+
+            let p = make_particle(pos, p_vel, size, rot, ang_vel, life_time, color, 0);
+            spawn_particle(p);
+        }
     }
 }
 
@@ -476,21 +498,23 @@ void update_entity(Entity* en) {
 
     vec4 color = vec4_zero;
 
-    for 0 .. list_length(bullets) {
-        let bullet = bullets[it];
-        if bullet.team_id == en.team_id continue;
+    if en.entity_type != EntityType.shockwave {
+        for 0 .. list_length(bullets) {
+            let bullet = bullets[it];
+            if bullet.team_id == en.team_id continue;
 
-        float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
-        if intersection < 0 {
-            color = {1, 1, 1, 1};
-            en.hp--;
-            apply_impulse(en, bullet.vel);
+            float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
+            if intersection < 0 {
+                color = {1, 1, 1, 1};
+                en.hp--;
+                apply_impulse(en, bullet.vel);
 
-            if en == player  this_frame.player_took_damage = true;
+                if en == player  this_frame.player_took_damage = true;
 
-            list_unordered_remove(bullets, it-- as uint32);
+                list_unordered_remove(bullets, it-- as uint32);
 
-            if is_dead(en) break;
+                if is_dead(en) break;
+            }
         }
     }
 
@@ -640,8 +664,8 @@ void update_world() {
 
 
     if mouse_pressed(Right_Mouse) {
-        // let e = spawn_enemy(mouse_world_pos);
-        let e = spawn_shockwave(mouse_world_pos);
+        let e = spawn_enemy(mouse_world_pos);
+        // let e = spawn_shockwave(mouse_world_pos);
         // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
 
         // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
@@ -714,28 +738,36 @@ void update_world() {
     for 0 .. list_length(bullets) {
         let bullet = *bullets[it];
 
-        const despawn_radius = 400;
-        if player and sqdist(player.tr.pos, bullet.pos) > (despawn_radius*despawn_radius) {
+        Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 1 };
+        draw_sprite(tr, 0, sprite_projectile, vec4_one, vec4_zero);
+
+        vec2 pos_start = bullet.pos;
+        vec2 pos_end   = bullet.pos + bullet.vel * dt;
+
+        uint32 num_p = 10;
+        for 0 .. num_p {
+            float32 t = it as float32 / num_p;
+
+            vec2    pos = lerp(t, pos_start, pos_end);
+            vec2    vel = random_vec2(10);
+            float32 size = 0.7;
+            float32 rot = random(global_seed++) * Pi;
+            float32 ang_vel = 1;
+            float32 life_time = 0.15 + dt*t;
+            vec4    color = color_to_vec4(rgba(0xFF6A00FF));
+
+            Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
+            spawn_particle(p);
+        }
+
+        bullet.pos = pos_end;
+        bullet.life_time += dt;
+
+        if bullet.life_time > 1.3 {
             list_unordered_remove(bullets, it as uint32);
             it--;
             continue;
         }
-
-        Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 0.1 };
-        apply_transform(tr);
-
-        vec2 particle_scale = {4, 16}; // TODO: hard coded dimentions here
-        apply_entity_scale(particle_scale);
-        apply_uv(vec2_zero, vec2_one);
-        draw_elements(quad_db);
-
-        // draw_texture(tr, 0.0, projectile, vec4_one);
-
-        Color color = rgba(0xFF6A00FF);
-        Particle p = make_particle(bullet.pos, random_vec2(10), 1, random(global_seed++) * Pi, 1, 0.5, color_to_vec4(color), 0);
-        spawn_particle(p);
-
-        bullet.pos = bullet.pos + bullet.vel * dt;
     }
 
 

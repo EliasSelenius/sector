@@ -15,23 +15,19 @@ include "src/inventory.pog";
 /* TODOs:
     - we probably need transparancy sorting because how else do we do alpha blending with transparent objects/particles/dustclouds
     - dust particles floating in space
-
     - several layers of fog/dust in background
-
-    - spaceship debrie on destruction
-
     - asteroid cluster distribution
-    - shockwave
-
     - bullet impact particles
 
-    - when spawning bullet particle trail we should interpolate inbetween frames for better trail
+    - smoke particle on damaged ships
+    - electric particle effect on damaged ships
 
 Priority:
     - spacestation
     - drop cargo at spacestation -> cargo turns into money -> money buys bigger ships
 
-
+    - seperate rendering and game logic into different codepaths
+        - render map
 
 
 research audio implementations:

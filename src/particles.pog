@@ -115,6 +115,7 @@ void spawn_shockwave(vec2 pos, float32 pressure) {
 void spawn_explosion(uint32 count, vec2 pos, vel, float32 spread) {
 
     spawn_shockwave(pos, spread * 2 * 16);
+    spawn_shockwave(pos);
 
     for 0 .. count {
         vec2 r = random_vec2(spread);
