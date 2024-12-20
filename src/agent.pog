@@ -1,0 +1,59 @@
+
+enum Agent_Behaviour {
+    assist; follow; attack; mine_asteroid;
+}
+
+void update_ai(Entity* en) {
+
+    switch en.behaviour {
+
+        case .assist: {
+
+        } break;
+
+        case .follow: {
+            if player agent_goto(en, player.tr.pos);
+        } break;
+
+        case .attack: {
+            if en.target == null {
+                en.target = closest_entity(en, EntityType.ship);
+            } else {
+                agent_attack(en);
+            }
+        } break;
+
+        case .mine_asteroid: {
+
+        } break;
+    }
+
+}
+
+void agent_goto(Entity* en, vec2 pos) {
+    turn_to(en, pos);
+    thrust(en, vec2_unit_y);
+}
+
+void agent_attack(Entity* en) {
+    turn_to(en, en.target.tr.pos);
+    let dist = circle_dist(en, en.target);
+
+    if dist < 15*16  fire_gun(en);
+
+    float32 min_dist = 80;
+    float32 max_dist = 200;
+
+    vec2 thrust_dir = {};
+
+    if dist < min_dist {
+        thrust_dir.y = -1;
+    } else if dist > max_dist {
+        thrust_dir.y = 1;
+    } else {
+        let denom = abs(en.target.vel.x);
+        thrust_dir.x = denom == 0.0 ? 0.0 : -en.target.vel.x / denom;
+    }
+
+    thrust(en, thrust_dir);
+}

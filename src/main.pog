@@ -4,6 +4,7 @@ include "../grax/grax.pog";
 include "src/world.pog";
 include "src/particles.pog";
 include "src/inventory.pog";
+include "src/agent.pog";
 
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer
@@ -25,6 +26,17 @@ include "src/inventory.pog";
 Priority:
     - spacestation
     - drop cargo at spacestation -> cargo turns into money -> money buys bigger ships
+
+    - improve AI
+        - detection range
+        - passive behaviour
+            - pickup items
+            - destroy asteroid
+            - drop cargo at spacestation
+            - follow behaviour fleet leader
+
+        - aggressive when provoked
+            - loose aggression
 
     - seperate rendering and game logic into different codepaths
         - render map
