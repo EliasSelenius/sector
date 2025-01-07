@@ -16,22 +16,25 @@ struct Cargo {
 
 uint32 cargo_amount(Entity* en) return en.cargo ? en.cargo.amount : 0;
 
-void pickup(Entity* en, drop) {
+uint32 add_item(Entity* en, Item item) {
     if en.cargo == null {
         en.cargo = alloc Cargo;
         @en.cargo = {};
     }
 
     int32 cap_left = en.cargo_capacity as int32 - en.cargo.amount as int32;
-    if cap_left <= 0 return;
-    uint32 amount = min(cap_left, drop.item.stack_count);
+    if cap_left <= 0 return 0;
+    uint32 amount = min(cap_left, item.stack_count);
 
-    drop.item.stack_count -= amount;
-    en.cargo.items[drop.item.kind].stack_count += amount;
+    en.cargo.items[item.kind].stack_count += amount;
     en.cargo.amount += amount;
+    return amount;
+}
 
+void pickup(Entity* en, drop) {
+    uint32 amount = add_item(en, drop.item);
+    drop.item.stack_count -= amount;
     if drop.item.stack_count == 0  despawn(drop);
-
     if en == player and amount   this_frame.player_pickup_item = true;
 }
 

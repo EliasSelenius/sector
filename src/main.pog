@@ -18,10 +18,11 @@ include "src/agent.pog";
     - dust particles floating in space
     - several layers of fog/dust in background
     - asteroid cluster distribution
-    - bullet impact particles
 
     - smoke particle on damaged ships
     - electric particle effect on damaged ships
+
+    - semi-transparent ice asteroids
 
 Priority:
     - spacestation
@@ -63,15 +64,15 @@ void apply_transform(Transform2D t, float32 depth) {
     set_uniform("entity_rot", t.rot);
     set_uniform("entity_scale", t.scale, t.scale);
 }
+void apply_entity_scale(vec2 scale) {
+    set_uniform("entity_scale", scale);
+}
 
 void apply_colors(vec4 factor, additive) {
     set_uniform("color_factor", factor);
     set_uniform("color_additive", additive);
 }
 
-void apply_entity_scale(vec2 scale) {
-    set_uniform("entity_scale", scale);
-}
 
 void apply_uv(vec2 uv_offset, uv_scale) {
     set_uniform("uv_offset", uv_offset);
@@ -98,13 +99,52 @@ void draw_texture(DrawBuffers db, Transform2D tr, float32 depth, Texture2D tex, 
     draw_texture(db, tr, depth, tex, uv_offset, uv_scale, color_factor, color_additive);
 }
 
-void draw_texture(DrawBuffers db, Transform2D tr, float32 depth, Texture2D tex, vec2 uv_offset, uv_scale, vec4 color_factor, color_additive) {
-    apply_colors(color_factor, color_additive);
-    apply_transform(tr, depth);
-    apply_entity_scale(uv_scale * make_vec(tex.width, tex.height) * tr.scale);
-    apply_uv(uv_offset, uv_scale);
-    bind(tex);
-    draw_elements(db);
+void draw_texture(
+    DrawBuffers db,
+    Transform2D tr,
+    float32 depth,
+    Texture2D tex,
+    vec2 uv_offset, uv_scale,
+    vec4 color_factor, color_additive)
+{
+    // apply_colors(color_factor, color_additive);
+    // apply_transform(tr, depth);
+    // apply_entity_scale(uv_scale * make_vec(tex.width, tex.height) * tr.scale);
+    // apply_uv(uv_offset, uv_scale);
+    // bind(tex);
+    // draw_elements(db);
+
+
+    Instanced_Draw_Call* draw_call = null;
+    for 0 .. list_length(R.draw_calls) {
+        let dc = *R.draw_calls[it];
+        if dc.tex == tex.gl_handle {
+            draw_call = dc;
+            goto append_instance;
+        }
+    }
+
+    if draw_call == null {
+        Instanced_Draw_Call dc = {};
+        dc.instances = list_create(sizeof InstanceData);
+        dc.tex = tex.gl_handle;
+        draw_call = list_add(*R.draw_calls, *dc);
+    }
+
+    append_instance: {
+        InstanceData ins = {};
+        ins.pos = make_vec(tr.pos, depth);
+        ins.rot = tr.rot;
+        ins.scale = uv_scale * make_vec(tex.width, tex.height) * tr.scale;
+
+        ins.uv_offset = uv_offset;
+        ins.uv_scale = uv_scale;
+
+        ins.color_factor = color_factor;
+        ins.color_additive = color_additive;
+
+        list_add(*draw_call.instances, *ins);
+    }
 }
 
 
@@ -120,6 +160,55 @@ void draw_sprite(DrawBuffers db, Transform2D tr, float32 depth, Sprite sprite, v
 
 void draw_sprite(Transform2D tr, float32 depth, Sprite sprite, vec4 color_factor, color_additive) {
     draw_texture(quad_db, tr, depth, sprite.tex, sprite.uv_offset, sprite.uv_scale, color_factor, color_additive);
+}
+
+
+Vertex_Attrib_Type[] instance_attribs = { .vec3, .float32, .vec2, .vec2, .vec2, .vec4, .vec4 };
+struct InstanceData {
+    vec3 pos;
+    float32 rot;
+    vec2 scale;
+    vec2 uv_offset, uv_scale;
+    vec4 color_factor, color_additive;
+}
+
+struct Instanced_Draw_Call {
+    InstanceData[..] instances;
+    uint32 tex;
+}
+
+RendererData R;
+struct RendererData {
+    Instanced_Draw_Call[..] draw_calls;
+    uint32 vbo_instances;
+}
+
+void dispatch_sprites() {
+
+
+    use(*default2d_shader);
+    enable_depth_test();
+
+    glDepthMask(true);
+    disable_blending();
+    enable_alpha_blending();
+
+    apply_camera(camera);
+
+    for 0 .. list_length(R.draw_calls) {
+        let dc = *R.draw_calls[it];
+        uint32 instance_count = list_length(dc.instances);
+        update_buffer(R.vbo_instances, instance_count * sizeof InstanceData, dc.instances);
+
+        bind_texture2D(dc.tex, 0);
+        draw_elements(quad_db, instance_count);
+        list_clear(dc.instances);
+    }
+
+
+    // glDepthMask(false);
+    enable_alpha_blending();
+    // TODO: draw semi-transparent sprites
 }
 
 
@@ -184,8 +273,10 @@ Sprite sprite_spacestation;
 
 Texture2D projectile;
 Texture2D particle;
+
 Sprite sprite_projectile;
 Sprite sprite_particle;
+Sprite sprite_shockwave;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -199,11 +290,18 @@ Sprite sprite_particle;
 // }
 
 void loadassets() {
+
+
     projectile = load_texture2D("assets/proj.bmp");
     particle   = load_texture2D("assets/particle.bmp");
 
     set_filter(particle, TextureFilter.linear);
     // set_wrap_mode(particle, TextureWrapMode.clamp_to_edge);
+
+    Sprite load_sprite(char* file) return make_sprite(load_texture2D(file));
+    sprite_projectile = make_sprite(projectile);
+    sprite_particle = make_sprite(particle);
+    sprite_shockwave = load_sprite("assets/shockwave.bmp");
 
     Spritesheet load_spritesheet(char* file_name) {
         let image = load_bitmap(file_name);
@@ -236,8 +334,6 @@ void loadassets() {
     sprite_turret = get_sprite(*spritesheet, 9);
     sprite_spacestation = get_sprite(*spritesheet, 15);
 
-    sprite_projectile = make_sprite(projectile);
-    sprite_particle = make_sprite(particle);
 }
 
 void on_event(AppEvent event, AppEventData data) switch event {
@@ -289,7 +385,7 @@ void main() {
         vs[2] = {p, p + vec2_one*0.5, White};
 
         uint32[] inds = { 0, 1, 2 };
-        vertex2D[] verts;
+        vertex2D[] verts; // TODO: vertex2D[3] should implicitly convert to vertex2D[]
         verts.data = *vs;
         verts.length = 3;
         update_buffers(*db_debris[it], verts, inds);
@@ -297,12 +393,24 @@ void main() {
 
     set_clear_color(rgba(0x0a0a0aff));
 
+    { // init renderer
+        R.draw_calls = list_create(sizeof Instanced_Draw_Call);
+
+        glBindVertexArray(quad_db.vao);
+
+        glGenBuffers(1, *R.vbo_instances);
+        glBindBuffer(GL_ARRAY_BUFFER , R.vbo_instances);
+
+        init_vertex_layout(3, 1, sizeof InstanceData, instance_attribs);
+
+        glBindVertexArray(0);
+    }
+
     while grax_loop() {
-        use(*default2d_shader);
-        enable_alpha_blending();
-        enable_depth_test();
 
         update_world();
+        dispatch_sprites();
+        draw_entity_list();
 
         draw_gui();
 
@@ -322,18 +430,28 @@ struct Gui_Bar {
 
     vec4 target_color;
     float32 target_height;
-
-    float32 progress;
 }
 
-Gui_Bar bar_player_capacity;
-Gui_Bar bar_player_health;
+void make_bar_jump(Gui_Bar* bar) {
+    bar.color = vec4_one;
+    bar.height = bar.target_height * 1.2;
+}
 
-void draw_bar(Gui_Bar* bar, vec2 pos, float32 width) {
+Gui_Bar bar_player_capacity = {
+    target_color = color_to_vec4(rgba(0x10_60_E0_F0)),
+    target_height = 0.07
+};
+
+Gui_Bar bar_player_health = {
+    target_color = color_to_vec4(rgba(0xFF_60_40_F0)),
+    target_height = 0.07
+};
+
+void draw_bar(Gui_Bar* bar, vec2 pos, float32 width, progress) {
     Color bar_bg  = rgba(0xAA_AA_AA_A0);
 
     vec2 size  = { width, bar.target_height };
-    vec2 size2 = { width * bar.progress, bar.height };
+    vec2 size2 = { width * progress, bar.height };
 
     anchor = .bottom_left;
     draw_rect(pos, size, bar_bg);
@@ -349,31 +467,171 @@ void draw_bar(Gui_Bar* bar, vec2 pos, float32 width) {
 void draw_gui() {
     float32 height = 0.07;
 
-    bar_player_capacity.target_color = color_to_vec4(rgba(0x10_60_E0_F0));
-    bar_player_capacity.target_height = height;
-
-    bar_player_health.target_color = color_to_vec4(rgba(0xFF_60_40_F0));
-    bar_player_health.target_height = height;
-
-    if this_frame.player_took_damage {
-        bar_player_health.color = vec4_one;
-        bar_player_health.height = height * 1.2;
-    }
-
-    if this_frame.player_pickup_item {
-        bar_player_capacity.color = vec4_one;
-        bar_player_capacity.height = height * 1.2;
-    }
+    if this_frame.player_took_damage  make_bar_jump(*bar_player_health);
+    if this_frame.player_pickup_item  make_bar_jump(*bar_player_capacity);
 
     if player {
         vec2 pos = app.bottom_left + make_vec(height, height);
+        float32 width = 1;
 
-        bar_player_capacity.progress = cargo_amount(player) / player.cargo_capacity as float32;
-        draw_bar(*bar_player_capacity, pos, 1.0);
-
+        draw_bar(*bar_player_capacity, pos, width, cargo_amount(player) / player.cargo_capacity as float32);
         pos.y += height * 1.5;
-
-        bar_player_health.progress = player.hp / player.max_hp;
-        draw_bar(*bar_player_health, pos, 1.0);
+        draw_bar(*bar_player_health, pos, width, player.hp / player.max_hp);
     }
 }
+
+/*
+
+struct Entity {
+    Entity* parent
+    Entity* target
+    EntityType entity_type
+    Agent_Behaviour behaviour
+    vec2 target_pos
+    with Transform2D tr
+    float32 depth
+    Sprite sprite
+    vec4 color_factor
+    vec4 color_additive
+    vec2 vel
+    float32 ang_vel
+    float32 mass
+    float32 collider_radius
+    uint32 level
+    float32 hp
+    float32 max_hp
+    uint32 team_id
+    float32 cooldown
+    uint32 cargo_capacity
+    Cargo* cargo
+    Item item
+}
+*/
+
+
+char*[] entity_type_names = {
+    "none",
+    "ready_for_reuse",
+    "ship",
+    "turret",
+    "station",
+    "asteroid",
+    "item",
+    "missile",
+    "debris",
+    "shockwave"
+};
+
+void draw_entity_properties_menu(Entity* en) {
+
+    if en == null return;
+
+    char* vec_to_str(vec2 v) {
+        let sb = temp_builder();
+        sb_append(sb, to_string(v.x as uint64));
+        sb_append(sb, ", ");
+        sb_append(sb, to_string(v.y as uint64));
+        return sb.content;
+    }
+
+    char* entity_to_str(Entity* en) {
+        return en ? entity_type_names[en.entity_type] : "null";
+    }
+
+    char* f32_to_str(float32 f) {
+        if is_nan(f) return "NaN";
+
+        let sb = temp_builder();
+
+        if f < 0  sb_append(sb, "-");
+        sb_append(sb, to_string(abs(f) as uint64));
+
+        fract(abs(f)) * 100000
+
+        return sb.content;
+    }
+
+    float32 text_height = 0.03; 
+
+    vec2 pos = {-1, 1 - text_height};
+    // pos = draw_text(pos, text_height, concat("entity_type: ", entity_type_names[en.entity_type], "\n"), White);
+    // pos = draw_text(pos, text_height, concat("pos:         ", vec_to_str(en.tr.pos), "\n"), White);
+
+    pos = draw_text(pos, text_height, concat("parent          : ", entity_to_str(en.parent), "\n"), White);
+    pos = draw_text(pos, text_height, concat("target          : ", entity_to_str(en.target), "\n"), White);
+    pos = draw_text(pos, text_height, concat("entity_type     : ", entity_type_names[en.entity_type], "\n"), White);
+    pos = draw_text(pos, text_height, concat("behaviour       : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("target_pos      : ", vec_to_str(en.target_pos), "\n"), White);
+    pos = draw_text(pos, text_height, concat("tr              : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("  .pos          : ", vec_to_str(en.tr.pos), "\n"), White);
+    pos = draw_text(pos, text_height, concat("  .rot          : ", f32_to_str(en.tr.rot), "\n"), White);
+    pos = draw_text(pos, text_height, concat("  .scale        : ", f32_to_str(en.tr.scale), "\n"), White);
+    pos = draw_text(pos, text_height, concat("depth           : ", f32_to_str(en.depth), "\n"), White);
+    pos = draw_text(pos, text_height, concat("sprite          : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("color_factor    : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("color_additive  : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("vel             : ", vec_to_str(en.vel), "\n"), White);
+    pos = draw_text(pos, text_height, concat("ang_vel         : ", f32_to_str(en.ang_vel), "\n"), White);
+    pos = draw_text(pos, text_height, concat("mass            : ", f32_to_str(en.mass), "\n"), White);
+    pos = draw_text(pos, text_height, concat("collider_radius : ", f32_to_str(en.collider_radius), "\n"), White);
+    pos = draw_text(pos, text_height, concat("level           : ", to_string(en.level), "\n"), White);
+    pos = draw_text(pos, text_height, concat("hp              : ", f32_to_str(en.hp), "\n"), White);
+    pos = draw_text(pos, text_height, concat("max_hp          : ", f32_to_str(en.max_hp), "\n"), White);
+    pos = draw_text(pos, text_height, concat("team_id         : ", to_string(en.level), "\n"), White);
+    pos = draw_text(pos, text_height, concat("cooldown        : ", f32_to_str(en.cooldown), "\n"), White);
+    pos = draw_text(pos, text_height, concat("cargo_capacity  : ", to_string(en.cargo_capacity), "\n"), White);
+    pos = draw_text(pos, text_height, concat("cargo           : ", "", "\n"), White);
+    pos = draw_text(pos, text_height, concat("item            : ", "", "\n"), White);
+
+}
+
+void draw_entity_list() {
+
+    static float32 vert_pos = 0;
+    static float32 vert_pos_target = 0;
+    static Entity* selected_entity = null;
+
+    float32 text_height = 0.03;
+
+
+    int64 index = -1;
+    if Input.mouse_pos.x < -1 {
+        index = round((app.top_left.y + vert_pos - Input.mouse_pos.y - text_height) / text_height) as int64;
+    }
+
+    vert_pos = exp_decay(vert_pos, vert_pos_target, 10, deltatime());
+
+    uint32 line_count = 0;
+    vec2 pos = app.top_left + { text_height/2, -text_height + vert_pos };
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        char* name = entity_type_names[en.entity_type];
+
+        if en.entity_type == EntityType.asteroid {
+            index++;
+            continue;
+        }
+
+        Color color = White;
+        if it == index {
+            color = Blue;
+            if mouse(Left_Mouse) {
+                selected_entity = en;
+                // player = en;
+                // camera.pos = en.tr.pos;
+            }
+        }
+
+        draw_text(pos, text_height, concat(to_string(it as uint64).chars, ". ", name), color);
+        pos.y -= text_height;
+        line_count++;
+    }
+
+    vert_pos_target = clamp(vert_pos_target - Input.mouse_scroll/10, 0, line_count * text_height);
+
+    draw_entity_properties_menu(selected_entity);
+
+}
+
+// void slider(vec2 pos, size, float32* value) {
+// }

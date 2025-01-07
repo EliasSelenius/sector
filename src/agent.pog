@@ -1,13 +1,38 @@
 
 enum Agent_Behaviour {
-    assist; follow; attack; mine_asteroid;
+    idle; assist; follow; attack; mine_asteroid;
 }
 
 void update_ai(Entity* en) {
 
-    switch en.behaviour {
+    switch (en.behaviour) {
+
+        case .idle: {
+
+            if en.target {
+                agent_attack(en, en.target);
+            } else {
+                let d = sqdist(en.target_pos, en.tr.pos);
+                if d < 60*60 or d > chunk_size*chunk_size {
+                    en.target_pos = en.tr.pos + {random(global_seed++), random(global_seed++)} * 600;
+                }
+
+                agent_goto(en, en.target_pos);
+            }
+
+        } break;
 
         case .assist: {
+
+            if en.target == null {
+                en.target = closest_entity(en, EntityType.ship);
+            } else {
+                if en.target.target and en.target.behaviour == Agent_Behaviour.attack {
+                    agent_attack(en, en.target.target);
+                } else {
+                    agent_goto(en, en.target.tr.pos);
+                }
+            }
 
         } break;
 
@@ -19,12 +44,11 @@ void update_ai(Entity* en) {
             if en.target == null {
                 en.target = closest_entity(en, EntityType.ship);
             } else {
-                agent_attack(en);
+                agent_attack(en, en.target);
             }
         } break;
 
         case .mine_asteroid: {
-
         } break;
     }
 
@@ -35,9 +59,9 @@ void agent_goto(Entity* en, vec2 pos) {
     thrust(en, vec2_unit_y);
 }
 
-void agent_attack(Entity* en) {
-    turn_to(en, en.target.tr.pos);
-    let dist = circle_dist(en, en.target);
+void agent_attack(Entity* en, target) {
+    turn_to(en, target.tr.pos);
+    let dist = circle_dist(en, target);
 
     if dist < 15*16  fire_gun(en);
 
@@ -51,8 +75,8 @@ void agent_attack(Entity* en) {
     } else if dist > max_dist {
         thrust_dir.y = 1;
     } else {
-        let denom = abs(en.target.vel.x);
-        thrust_dir.x = denom == 0.0 ? 0.0 : -en.target.vel.x / denom;
+        let denom = abs(target.vel.x);
+        thrust_dir.x = denom == 0.0 ? 0.0 : -target.vel.x / denom;
     }
 
     thrust(en, thrust_dir);

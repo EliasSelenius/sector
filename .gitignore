@@ -20,3 +20,4 @@ output.exp
 *.o
 *.ilk
 *.pdb
+shader_debug_log_*.txt

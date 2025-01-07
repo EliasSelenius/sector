@@ -87,7 +87,13 @@ void cleanup_pool(EntityPool* pool) {
         if en.parent and is_dead(en.parent) en.parent = null;
         if en.target and is_dead(en.target) en.target = null;
 
-        if is_dead(en) en.entity_type = .ready_for_reuse;
+        if is_dead(en) {
+            if en.cargo {
+                free(en.cargo);
+                en.cargo = null;
+            }
+            en.entity_type = .ready_for_reuse;
+        }
     }
 
     uint32 i = pool.count;
@@ -148,10 +154,12 @@ enum EntityType {
 }
 
 struct Entity {
-    Entity* parent, target;
+    Entity* parent;
+    Entity* target;
 
     EntityType entity_type;
     Agent_Behaviour behaviour;
+    vec2 target_pos;
 
     with Transform2D tr;
     float32 depth;
@@ -163,19 +171,20 @@ struct Entity {
     vec2 vel;
     float32 ang_vel;
     float32 mass;
+    float32 collider_radius;
 
     uint32 level;
     float32 hp, max_hp;
     uint32 team_id;
-    uint32 cargo_capacity;
     float32 cooldown;
-    float32 collider_radius;
 
+    uint32 cargo_capacity;
     Cargo* cargo;
     Item item;
 }
 
 struct Bullet {
+    Entity* emitter;
     vec2 pos;
     vec2 vel;
     float32 life_time;
@@ -195,7 +204,6 @@ bool is_dead(Entity* e) { return e.hp <= 0; }
 
 void despawn(Entity* en) {
     en.hp = 0;
-    if en.cargo  free(en.cargo);
 }
 
 // initializes entity data with sensible defaults, some based on sprite
@@ -228,7 +236,8 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
 
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = sst.cargo_capacity;
-
+    // TODO: this should work: ({.Rock, 10} as Item)
+    add_item(en, {ItemKind.Rock, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if ship_type == 5 {
         let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
@@ -283,15 +292,16 @@ Entity* spawn_missile(Entity* launcher) {
     en.team_id = launcher.team_id;
     en.cooldown = 7;
     en.vel = launcher.vel;
+    en.target = launcher.target;
     return en;
 }
 
 Entity* spawn_shockwave(vec2 pos) {
-    let en = spawn_entity(*entity_pool, pos, sprite_particle);
+    let en = spawn_entity(*entity_pool, pos, sprite_shockwave);
     en.entity_type = .shockwave;
     en.tr.scale = 0;
     en.cooldown = 1;
-    en.depth = 0.02;
+    en.depth = 0.005;
     return en;
 }
 
@@ -323,12 +333,24 @@ void thrust(Entity* e, vec2 dir) {
 
     apply_impulse(e, imp);
 
-    let sprite_size = get_sprite_pixel_size(e.sprite);
-    vec2 offset = {0, -sprite_size.y / 2};
-    vec2 particle_pos = local2world(e.tr, offset);
 
-    let P_vel = e.vel - dir * 8000 * dt;
-    spawn_particle(particle_pos, P_vel, 0.5, 1, 0.5, 2.0);
+    {
+        let sprite_size = get_sprite_pixel_size(e.sprite);
+        vec2 offset = {0, -sprite_size.y / 2};
+        vec2 particle_pos = local2world(e.tr, offset);
+
+        vec2    p_vel = e.vel - dir * 8000 * dt + random_vec2(20);
+        float32 size = random_range(0.5, 1);
+        float32 rot = random(global_seed++) * Pi;
+        float32 ang_vel = 1;
+        float32 life_time = random_range(0.1, 0.6);
+        uint32  flags = ParticleFlag_SubEmitter;
+
+        let p = make_particle(particle_pos, p_vel, size, rot, ang_vel, life_time, color_fire, flags);
+        p.color_end = color_smoke;
+        p.color_end.w = 0;
+        spawn_particle(p);
+    }
 }
 
 void turn_to(Entity* e, vec2 target) {
@@ -347,9 +369,13 @@ void fire_gun(Entity* e) {
         let dir = up(e.tr);
         dir.x *= -1;
 
-        let vel = e.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
-        let pos = e.tr.pos + dir * e.collider_radius;
-        spawn_bullet(pos, vel, e.team_id);
+        Bullet bullet = {};
+        bullet.emitter = e;
+        bullet.pos = e.tr.pos + dir * e.collider_radius;
+        bullet.vel = e.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
+        bullet.team_id = e.team_id;
+        list_add(*bullets, *bullet);
+
         e.cooldown = 0.25;
 
         uint32 num_p = 10;
@@ -362,7 +388,7 @@ void fire_gun(Entity* e) {
             float32 life_time = 1;
             vec4    color = color_to_vec4(rgba(0xFF6A00FF));
 
-            let p = make_particle(pos, p_vel, size, rot, ang_vel, life_time, color, 0);
+            let p = make_particle(bullet.pos, p_vel, size, rot, ang_vel, life_time, color, 0);
             spawn_particle(p);
         }
     }
@@ -404,10 +430,6 @@ void on_destroy(Entity* en) {
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
-
-                for 0 .. (en.collider_radius * 5) as uint32
-                    spawn_disipating_dust_particle(en.tr.pos, en.collider_radius * (0.1 + random01()*0.1), 50, color_dust);
-
             } else {
                 let drop_count = random_range(global_seed++, 0, 7) as uint32;
                 for 0 .. drop_count {
@@ -416,8 +438,16 @@ void on_destroy(Entity* en) {
                     a.ang_vel = random(global_seed++) * Pi;
                 }
 
-                spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
+                // spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
             }
+
+            for 0 .. (en.collider_radius * 10) as uint32 {
+                vec2 pos = en.tr.pos + random_vec2(en.collider_radius);
+                float32 size = 1 + random01() * 1;
+                float32 max_vel_magnitude = 50;
+                spawn_disipating_dust_particle(pos, size, max_vel_magnitude, color_dust);
+            }
+
 
         } break;
 
@@ -443,10 +473,17 @@ void update_entity(Entity* en) {
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
-    switch en.entity_type {
+    switch (en.entity_type) {
 
         case .ship: {
-            if en != player   update_ai(en);
+            if en != player {
+                update_ai(en);
+
+                let radius = chunk_size*1.6;
+                if sqdist(en.tr.pos, camera.pos) > radius*radius {
+                    despawn(en);
+                }
+            }
         } break;
 
         case .item: {
@@ -485,9 +522,19 @@ void update_entity(Entity* en) {
         } break;
 
         case .shockwave: {
-            en.tr.scale += 30 * dt;
+            en.tr.scale += 2 * dt;
             en.color_factor.w = clamp(en.cooldown, 0, 1);
             if en.cooldown <= 0 en.hp = 0;
+
+            let ens = closest_entities(en, en.collider_radius * en.tr.scale);
+            for 0 .. ens.length {
+                let e = ens[it];
+                e.color_additive = { 1, 1, 1, 0 } * 0.1;
+
+                vec2 force = normalize(e.tr.pos - en.tr.pos) * 1000 * e.collider_radius * 2;
+
+                apply_impulse(e, force*dt);
+            }
         } break;
 
         default: break;
@@ -500,6 +547,9 @@ void update_entity(Entity* en) {
 
             float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
             if intersection < 0 {
+                if en.target == null  en.target = bullet.emitter;
+                if bullet.emitter     bullet.emitter.target = en;
+
                 // en.color_additive = {1, 1, 1, 0};
                 en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
                 en.hp--;
@@ -570,6 +620,26 @@ Entity* closest_entity(Entity* self, EntityType et) {
     return result;
 }
 
+Entity*[] closest_entities(vec2 pos, float32 radius) return closest_entities(pos, null, radius);
+Entity*[] closest_entities(Entity* self, float32 radius) return closest_entities(self.tr.pos, self, radius);
+Entity*[] closest_entities(vec2 pos, Entity* self, float32 radius) {
+
+    static Entity*[..] list = list_create(sizeof Entity*);
+    list_clear(list);
+
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        if en == self or is_dead(en) continue;
+        // if sqdist(pos, en.tr.pos) < radius*radius   list_add(*list, *en);
+        if circle_dist(pos, radius, en.tr.pos, en.collider_radius*en.tr.scale) < 0   list_add(*list, *en);
+    }
+
+    Entity*[] result = {}; // TODO: Entity[..] should implicitly convert to Entity[]
+    result.data = list;
+    result.length = list_length(list);
+    return result;
+}
+
 Entity* first_intersecting_entity(Entity* self, EntityType et) {
     for 0 .. entity_pool.count {
         let en = *entity_pool.data[it];
@@ -592,7 +662,10 @@ void update_world() {
         static vec2 target_cam_pos = {};
         static float32 target_cam_zoom = 160;
 
-        target_cam_zoom = clamp(target_cam_zoom - target_cam_zoom*0.1*Input.mouse_scroll, 160, 1000);
+        const cam_min_zoom = 160;
+        const cam_max_zoom = 6000;
+
+        target_cam_zoom = clamp(target_cam_zoom - target_cam_zoom*0.1*Input.mouse_scroll, cam_min_zoom, cam_max_zoom);
         float32 target_cam_scale = target_cam_zoom;
 
         if player {
@@ -607,7 +680,7 @@ void update_world() {
     }
 
     vec2 mouse_world_pos = get_mouse_world_coord(camera);
-    apply_camera(camera);
+    // apply_camera(camera);
 
 
     if player {
@@ -707,16 +780,11 @@ void update_world() {
     update_entity_list(*chunk_3.entity_pool);
     update_entity_list(*chunk_4.entity_pool);
 
-    cleanup_pool(*entity_pool);
-    cleanup_pool(*chunk_1.entity_pool);
-    cleanup_pool(*chunk_2.entity_pool);
-    cleanup_pool(*chunk_3.entity_pool);
-    cleanup_pool(*chunk_4.entity_pool);
-
 
     bind(projectile);
     for 0 .. list_length(bullets) {
         let bullet = *bullets[it];
+        if bullet.emitter and is_dead(bullet.emitter) bullet.emitter = null;
 
         Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 1 };
         draw_sprite(tr, 0, sprite_projectile, vec4_one, vec4_zero);
@@ -751,16 +819,15 @@ void update_world() {
     }
 
 
-    static uint32 prev_bullets_count = 0;
-    uint32 bullets_count = list_length(bullets);
-    if bullets_count != prev_bullets_count {
-        // print("Bullets: ", bullets_count, "\n");
-        prev_bullets_count = bullets_count;
-    }
+
+    cleanup_pool(*entity_pool);
+    cleanup_pool(*chunk_1.entity_pool);
+    cleanup_pool(*chunk_2.entity_pool);
+    cleanup_pool(*chunk_3.entity_pool);
+    cleanup_pool(*chunk_4.entity_pool);
 
 
     update_particles();
-
 }
 
 void draw_background(vec2 center) {
@@ -782,7 +849,7 @@ void draw_background(vec2 center) {
     }
 }
 
-const chunk_size = 1600;
+const chunk_size = 2000;
 
 Chunk chunk_1 = init_chunk();
 Chunk chunk_2 = init_chunk();
@@ -793,6 +860,7 @@ Chunk chunk_4 = init_chunk();
 struct Chunk {
     ivec2 coord;
     EntityPool entity_pool;
+    Entity*[..] entities;
 }
 
 ivec2 get_chunk_coord(vec2 pos) {
@@ -813,15 +881,18 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     int32 seed = (coord.x & 0x0000FFFF) |
                 ((coord.y << 16) & 0xFFFF0000);
 
-    print("spawn chunk ", coord, " with seed: ", seed, "\n");
+    // print("spawn chunk ", coord, " with seed: ", seed, "\n");
 
     const half = chunk_size / 2;
-    vec2 chunk_pos = make_vec(sub(mul(coord, chunk_size), { half, half } as ivec2));
+    vec2 chunk_pos = make_vec(coord) * chunk_size - { half, half };
 
 
     if random(seed++) < 0 {
-        let ss = spawn_entity(*chunk.entity_pool, chunk_pos, sprite_spacestation);
+        vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
+        let ss = spawn_entity(*entity_pool, pos, sprite_spacestation);
         ss.entity_type = .station;
+        ss.depth = 0.1;
+        ss.tr.rot = random(seed++) * Pi;
     }
 
 
@@ -829,15 +900,15 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     for 0 .. chunk_size*chunk_size / 30_000 {
 
         uint32 asteroid_index = (random01(seed++) * sprites_asteroids_count) as uint32;
-        vec2 pos = { random(seed++) * half, random(seed++) * half };
-        let en = spawn_asteroid(*chunk.entity_pool, pos + chunk_pos, asteroid_index);
+        vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
+        let en = spawn_asteroid(*entity_pool, pos, asteroid_index);
         en.tr.rot = random(seed++) * Pi;
         en.depth = 0.01;
     }
 
 
     if do_enemy_spawn and random(global_seed++) < 0 {
-        vec2 pos = { random(seed++) * half, random(seed++) * half };
-        spawn_enemy(pos + chunk_pos);
+        vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
+        spawn_enemy(pos);
     }
 }
