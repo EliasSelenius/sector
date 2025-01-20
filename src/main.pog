@@ -6,6 +6,8 @@ include "src/particles.pog";
 include "src/inventory.pog";
 include "src/agent.pog";
 
+// learn to tolerate boredom
+
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer
 
@@ -116,8 +118,19 @@ void draw_texture(
 
 
     Instanced_Draw_Call* draw_call = null;
-    for 0 .. list_length(R.draw_calls) {
-        let dc = *R.draw_calls[it];
+    Instanced_Draw_Call[..]* draw_calls_list;
+    if tex.gl_handle == sprite_projectile.tex.gl_handle
+    or tex.gl_handle == sprite_shockwave.tex.gl_handle
+    or tex.gl_handle == sprite_particle.tex.gl_handle
+    or tex.gl_handle == sprite_cloud.tex.gl_handle
+    {
+        draw_calls_list = *R.draw_calls_semi_transparent;
+    } else {
+        draw_calls_list = *R.draw_calls;
+    }
+
+    for 0 .. list_length(@draw_calls_list) {
+        let dc = *(@draw_calls_list)[it];
         if dc.tex == tex.gl_handle {
             draw_call = dc;
             goto append_instance;
@@ -128,7 +141,7 @@ void draw_texture(
         Instanced_Draw_Call dc = {};
         dc.instances = list_create(sizeof InstanceData);
         dc.tex = tex.gl_handle;
-        draw_call = list_add(*R.draw_calls, *dc);
+        draw_call = list_add(draw_calls_list, *dc);
     }
 
     append_instance: {
@@ -142,6 +155,7 @@ void draw_texture(
 
         ins.color_factor = color_factor;
         ins.color_additive = color_additive;
+
 
         list_add(*draw_call.instances, *ins);
     }
@@ -180,6 +194,7 @@ struct Instanced_Draw_Call {
 RendererData R;
 struct RendererData {
     Instanced_Draw_Call[..] draw_calls;
+    Instanced_Draw_Call[..] draw_calls_semi_transparent;
     uint32 vbo_instances;
 }
 
@@ -190,13 +205,13 @@ void dispatch_sprites() {
     enable_depth_test();
 
     glDepthMask(true);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     disable_blending();
-    enable_alpha_blending();
+    // enable_alpha_blending();
 
     apply_camera(camera);
 
-    for 0 .. list_length(R.draw_calls) {
-        let dc = *R.draw_calls[it];
+    void issue_draw_command(Instanced_Draw_Call* dc) {
         uint32 instance_count = list_length(dc.instances);
         update_buffer(R.vbo_instances, instance_count * sizeof InstanceData, dc.instances);
 
@@ -205,10 +220,25 @@ void dispatch_sprites() {
         list_clear(dc.instances);
     }
 
+    for 0 .. list_length(R.draw_calls) {
+        let dc = *R.draw_calls[it];
+        issue_draw_command(dc);
+    }
 
-    // glDepthMask(false);
-    enable_alpha_blending();
-    // TODO: draw semi-transparent sprites
+
+    glDepthMask(false);
+    // enable_alpha_blending();
+    // enable_additive_blending();
+    glEnable(GL_BLEND);
+    glBlendEquation(GL_FUNC_ADD);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+
+
+    for 0 .. list_length(R.draw_calls_semi_transparent) {
+        let dc = *R.draw_calls_semi_transparent[it];
+        issue_draw_command(dc);
+    }
+
 }
 
 
@@ -231,6 +261,7 @@ struct Sprite {
     vec2 uv_offset;
     vec2 uv_scale;
     Texture2D tex;
+    bool is_semi_transparent;
 }
 
 Sprite get_sprite(with Spritesheet* sheet, uint32 index) {
@@ -277,6 +308,8 @@ Texture2D particle;
 Sprite sprite_projectile;
 Sprite sprite_particle;
 Sprite sprite_shockwave;
+Sprite sprite_cloud;
+
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -295,13 +328,14 @@ void loadassets() {
     projectile = load_texture2D("assets/proj.bmp");
     particle   = load_texture2D("assets/particle.bmp");
 
-    set_filter(particle, TextureFilter.linear);
+    // set_filter(particle, TextureFilter.linear);
     // set_wrap_mode(particle, TextureWrapMode.clamp_to_edge);
 
     Sprite load_sprite(char* file) return make_sprite(load_texture2D(file));
     sprite_projectile = make_sprite(projectile);
     sprite_particle = make_sprite(particle);
     sprite_shockwave = load_sprite("assets/shockwave.bmp");
+    sprite_cloud = load_sprite("assets/cloud.bmp");
 
     Spritesheet load_spritesheet(char* file_name) {
         let image = load_bitmap(file_name);
@@ -341,6 +375,46 @@ void on_event(AppEvent event, AppEventData data) switch event {
 }
 
 void main() {
+
+    // { // test
+    //     void test(uint32 i) {
+    //         let f = @(*i as float32*);
+    //         print("float: ", f, " = ", f32_to_str(f), "\n");
+    //     }
+
+    //     test(0x7f80_0000);
+    //     test(0x7f80_0001);
+    //     test(0x7f80_0002);
+    //     test(0x7f80_0003);
+    //     test(0x7f80_0004);
+    //     test(0x7f80_0005);
+    //     test(0x7f80_0006);
+    //     test(0x7f80_0007);
+    //     test(0x7f80_0008);
+    //     test(0x7f80_0009);
+    //     test(0x7f80_000a);
+    //     test(0x7f80_000b);
+    //     test(0x7f80_000c);
+    //     test(0x7f80_000d);
+    //     test(0x7f80_000e);
+    //     test(0x7f80_000f);
+
+    //     test(0xffc0_0000);
+    //     test(0x7fc0_0000);
+
+    //     test(0xff_800001);
+    //     test(0xff_800000);
+
+    //     test(0x0000_0000);
+
+    //     float32 div_by_zero = 12.0/0.0;
+    //     test(@(*div_by_zero as uint32*));
+
+    //     float32 sqrt_neg = sqrtf(-1);
+    //     test(@(*sqrt_neg as uint32*));
+
+    // } return;
+
     grax_init();
     app.on_event = on_event;
 
@@ -395,6 +469,7 @@ void main() {
 
     { // init renderer
         R.draw_calls = list_create(sizeof Instanced_Draw_Call);
+        R.draw_calls_semi_transparent = list_create(sizeof Instanced_Draw_Call);
 
         glBindVertexArray(quad_db.vao);
 
@@ -406,6 +481,8 @@ void main() {
         glBindVertexArray(0);
     }
 
+    init_chunks();
+
     while grax_loop() {
 
         update_world();
@@ -413,6 +490,8 @@ void main() {
         draw_entity_list();
 
         draw_gui();
+
+        // draw_text(make_vec(0.5, 0.5), 0.07, to_string())
 
         this_frame = {};
     }
@@ -474,9 +553,14 @@ void draw_gui() {
         vec2 pos = app.bottom_left + make_vec(height, height);
         float32 width = 1;
 
+        anchor = .bottom_left;
+        draw_text(pos + make_vec(width + height/2, 0), height, to_string(player_money), Cyan);
+        anchor = .center;
+
         draw_bar(*bar_player_capacity, pos, width, cargo_amount(player) / player.cargo_capacity as float32);
         pos.y += height * 1.5;
         draw_bar(*bar_player_health, pos, width, player.hp / player.max_hp);
+
     }
 }
 
@@ -508,7 +592,7 @@ struct Entity {
 }
 */
 
-
+// TODO: compiler rtti
 char*[] entity_type_names = {
     "none",
     "ready_for_reuse",
@@ -522,41 +606,62 @@ char*[] entity_type_names = {
     "shockwave"
 };
 
+
+string f32_to_str(float32 f) return f32_to_str(temp_builder(), f);
+string f32_to_str(StringBuilder* sb, float32 f) {
+
+    uint32 bits = @(*f as uint32*);
+    // print("float: ", f, " bits: ", bits, "\n");
+
+    if bits&0x8000_0000  sb_append(sb, "-");
+
+    if bits == 0x7f80_0000 or bits == 0xff80_0000 {
+        sb_append(sb, "Infinity");
+        return to_string(sb);
+    }
+
+    if is_nan(f) {
+        sb_append(sb, "NaN");
+        return to_string(sb);
+    }
+
+    sb_append(sb, to_string(abs(f) as uint64));
+    sb_append(sb, ".");
+
+    let frac = to_string(round(fract(abs(f)) * 1_000_000) as uint64);
+    for 0 .. 6 - frac.length   sb_append(sb, '0');
+    sb_append(sb, frac);
+
+    return to_string(sb);
+}
+
+char* vec_to_str(vec2 v) return vec_to_str(temp_builder(), v);
+char* vec_to_str(StringBuilder* sb, vec2 v) {
+    f32_to_str(sb, v.x);
+    sb_append(sb, ", ");
+    f32_to_str(sb, v.y);
+    return sb.content;
+}
+
+char* entity_to_str(Entity* en) {
+    return en ? entity_type_names[en.entity_type] : "null";
+}
+
+
 void draw_entity_properties_menu(Entity* en) {
 
     if en == null return;
 
-    char* vec_to_str(vec2 v) {
-        let sb = temp_builder();
-        sb_append(sb, to_string(v.x as uint64));
-        sb_append(sb, ", ");
-        sb_append(sb, to_string(v.y as uint64));
-        return sb.content;
-    }
 
-    char* entity_to_str(Entity* en) {
-        return en ? entity_type_names[en.entity_type] : "null";
-    }
+    uint32 entity_id = (en as uint64 - entity_pool.data as uint64) / sizeof Entity;
 
-    char* f32_to_str(float32 f) {
-        if is_nan(f) return "NaN";
-
-        let sb = temp_builder();
-
-        if f < 0  sb_append(sb, "-");
-        sb_append(sb, to_string(abs(f) as uint64));
-
-        fract(abs(f)) * 100000
-
-        return sb.content;
-    }
-
-    float32 text_height = 0.03; 
+    float32 text_height = 0.03;
 
     vec2 pos = {-1, 1 - text_height};
-    // pos = draw_text(pos, text_height, concat("entity_type: ", entity_type_names[en.entity_type], "\n"), White);
-    // pos = draw_text(pos, text_height, concat("pos:         ", vec_to_str(en.tr.pos), "\n"), White);
 
+    // pos = (pos - camera.pos) / camera.scale;
+
+    pos = draw_text(pos, text_height, concat("ID              : ", to_string(entity_id), "\n"), White);
     pos = draw_text(pos, text_height, concat("parent          : ", entity_to_str(en.parent), "\n"), White);
     pos = draw_text(pos, text_height, concat("target          : ", entity_to_str(en.target), "\n"), White);
     pos = draw_text(pos, text_height, concat("entity_type     : ", entity_type_names[en.entity_type], "\n"), White);
@@ -564,7 +669,13 @@ void draw_entity_properties_menu(Entity* en) {
     pos = draw_text(pos, text_height, concat("target_pos      : ", vec_to_str(en.target_pos), "\n"), White);
     pos = draw_text(pos, text_height, concat("tr              : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("  .pos          : ", vec_to_str(en.tr.pos), "\n"), White);
-    pos = draw_text(pos, text_height, concat("  .rot          : ", f32_to_str(en.tr.rot), "\n"), White);
+
+    // pos = draw_text(pos, text_height, concat("  .rot          : ", f32_to_str(en.tr.rot), "\n"), White);
+    pos = draw_text(pos, text_height, "  .rot          : ", White);
+    field_float(*en.tr.rot, pos, text_height);
+    pos.y -= text_height;
+    pos.x = -1;
+
     pos = draw_text(pos, text_height, concat("  .scale        : ", f32_to_str(en.tr.scale), "\n"), White);
     pos = draw_text(pos, text_height, concat("depth           : ", f32_to_str(en.depth), "\n"), White);
     pos = draw_text(pos, text_height, concat("sprite          : ", "", "\n"), White);
@@ -630,8 +741,44 @@ void draw_entity_list() {
     vert_pos_target = clamp(vert_pos_target - Input.mouse_scroll/10, 0, line_count * text_height);
 
     draw_entity_properties_menu(selected_entity);
+    if selected_entity  selected_entity.color_additive = vec4_one;// * 2;
+
+    { // test
+        static float32 v = 12;
+        field_float(*v, make_vec(0, 0), 0.05);
+    }
 
 }
+
+void field_float(float32* value, vec2 pos, float32 height) {
+    // anchor = .bottom_left;
+
+
+    let text = f32_to_str(@value);
+    vec2 size = make_vec(height/2 * text.length, height);
+
+    vec2 v = (Input.mouse_pos - pos);
+    if v.x < size.x and v.y < size.y and v.x > 0 and v.y > 0 {
+        draw_rect(pos + make_vec(size.x/2 - height/4, 0), size, opacity(White, 0.3));
+
+        @value += Input.mouse_scroll / (key_down(GLFW_KEY_LEFT_SHIFT) ? 10 : 1);
+        Input.mouse_scroll = 0;
+    }
+
+    draw_text(pos, height, text, White);
+    // anchor = .center;
+}
+
+    // widget_push();
+    // background(image)
+    // text("dawodjaw")
+    // text()
+    // if hover() {
+    //     border(Red);
+    // } else {
+    //     border(Blue);
+    // }
+    // widget_pop();
 
 // void slider(vec2 pos, size, float32* value) {
 // }
