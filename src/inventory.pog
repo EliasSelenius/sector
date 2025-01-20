@@ -35,7 +35,11 @@ void pickup(Entity* en, drop) {
     uint32 amount = add_item(en, drop.item);
     drop.item.stack_count -= amount;
     if drop.item.stack_count == 0  despawn(drop);
+
     if en == player and amount   this_frame.player_pickup_item = true;
+
+    if en.entity_type == EntityType.station
+    and drop.target and drop.target.team_id == team_id_player  player_money += amount;
 }
 
 void drop_cargo(Entity* en, float32 cooldown) {
@@ -49,6 +53,7 @@ void drop_cargo(Entity* en, float32 cooldown) {
             drop.vel = drop.vel + en.vel + random_vec2(50);
             drop.ang_vel = random(global_seed++) * Pi;
             drop.cooldown = cooldown;
+            drop.target = en;
         }
     }
 

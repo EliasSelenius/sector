@@ -110,7 +110,7 @@ const linear_drag = 0.99;
 
 EntityPool entity_pool = init_pool();
 Entity* player;
-
+uint32 player_money = 0;
 
 const team_id_asteroids = 0;
 const team_id_player = 1;
@@ -156,6 +156,8 @@ enum EntityType {
 struct Entity {
     Entity* parent;
     Entity* target;
+
+    Chunk* chunk;
 
     EntityType entity_type;
     Agent_Behaviour behaviour;
@@ -207,8 +209,8 @@ void despawn(Entity* en) {
 }
 
 // initializes entity data with sensible defaults, some based on sprite
-Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
-    let en = entity_new(pool);
+Entity* spawn_entity(vec2 pos, Sprite sprite) {
+    let en = entity_new(*entity_pool);
     @en = {};
     en.tr.pos = pos;
     en.tr.scale = 1;
@@ -227,7 +229,7 @@ Entity* spawn_entity(EntityPool* pool, vec2 pos, Sprite sprite) {
 Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
     let sst = spaceship_types[ship_type];
 
-    let en = spawn_entity(*entity_pool, pos, sst.sprite);
+    let en = spawn_entity(pos, sst.sprite);
     en.entity_type = .ship;
 
     en.max_hp *= 6;
@@ -240,7 +242,7 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
     add_item(en, {ItemKind.Rock, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if ship_type == 5 {
-        let turret = spawn_entity(*entity_pool, vec2_zero, sprite_turret);
+        let turret = spawn_entity(vec2_zero, sprite_turret);
         turret.entity_type = .turret;
         turret.parent = en;
         turret.team_id = en.team_id;
@@ -263,10 +265,10 @@ Entity* spawn_enemy(vec2 pos) {
     return en;
 }
 
-Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
+Entity* spawn_asteroid(vec2 pos, uint32 asteroid_index) {
 
     let sprite = sprites_asteroids[asteroid_index];
-    let en = spawn_entity(pool, pos, sprite);
+    let en = spawn_entity(pos, sprite);
     en.entity_type = .asteroid;
     en.level = asteroid_index;
 
@@ -279,14 +281,14 @@ Entity* spawn_asteroid(EntityPool* pool, vec2 pos, uint32 asteroid_index) {
 
 Entity* spawn_item(vec2 pos, ItemKind item_kind, uint32 count) return spawn_item(pos, { item_kind, count } as Item);
 Entity* spawn_item(vec2 pos, Item item) {
-    let en = spawn_entity(*entity_pool, pos, sprites_items[item.kind]);
+    let en = spawn_entity(pos, sprites_items[item.kind]);
     en.entity_type = .item;
     en.item = item;
     return en;
 }
 
 Entity* spawn_missile(Entity* launcher) {
-    let en = spawn_entity(*entity_pool, launcher.tr.pos, sprites_items[0]);
+    let en = spawn_entity(launcher.tr.pos, sprites_items[0]);
     en.entity_type = .missile;
     en.tr.rot = launcher.tr.rot;
     en.team_id = launcher.team_id;
@@ -297,7 +299,7 @@ Entity* spawn_missile(Entity* launcher) {
 }
 
 Entity* spawn_shockwave(vec2 pos) {
-    let en = spawn_entity(*entity_pool, pos, sprite_shockwave);
+    let en = spawn_entity(pos, sprite_shockwave);
     en.entity_type = .shockwave;
     en.tr.scale = 0;
     en.cooldown = 1;
@@ -403,7 +405,7 @@ void on_destroy(Entity* en) {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
 
             for 0 .. debris_count {
-                let debris = spawn_entity(*entity_pool, en.tr.pos, en.sprite);
+                let debris = spawn_entity(en.tr.pos, en.sprite);
                 debris.entity_type = .debris;
                 debris.level = it;
 
@@ -426,7 +428,7 @@ void on_destroy(Entity* en) {
         case .asteroid: {
             if en.level {
                 for 0 .. 2 {
-                    let a = spawn_asteroid(*entity_pool, en.tr.pos, en.level - 1);
+                    let a = spawn_asteroid(en.tr.pos, en.level - 1);
                     a.vel = a.vel + en.vel + random_unit_vec2() * 50;
                     a.ang_vel = random(global_seed++) * Pi;
                 }
@@ -478,20 +480,21 @@ void update_entity(Entity* en) {
         case .ship: {
             if en != player {
                 update_ai(en);
-
-                let radius = chunk_size*1.6;
-                if sqdist(en.tr.pos, camera.pos) > radius*radius {
-                    despawn(en);
-                }
             }
         } break;
 
         case .item: {
-            if en.cooldown <= 0 {
-                let picker = closest_entity(en, EntityType.ship);
-                if picker and entity_intersects(en, picker) pickup(picker, en);
-            }
+            let pickers = closest_entities(en, en.collider_radius);
+            for 0 .. pickers.length {
+                let picker = pickers[it];
+                if picker.entity_type == EntityType.ship
+                or picker.entity_type == EntityType.station {
+                    if picker == en.target and en.cooldown > 0 continue;
 
+                    pickup(picker, en);
+                    break;
+                }
+            }
         } break;
 
         case .turret: {
@@ -531,7 +534,7 @@ void update_entity(Entity* en) {
                 let e = ens[it];
                 e.color_additive = { 1, 1, 1, 0 } * 0.1;
 
-                vec2 force = normalize(e.tr.pos - en.tr.pos) * 1000 * e.collider_radius * 2;
+                vec2 force = normalize_or(e.tr.pos - en.tr.pos, vec2_one) * 4000 * e.collider_radius*2;
 
                 apply_impulse(e, force*dt);
             }
@@ -547,8 +550,11 @@ void update_entity(Entity* en) {
 
             float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
             if intersection < 0 {
-                if en.target == null  en.target = bullet.emitter;
-                if bullet.emitter     bullet.emitter.target = en;
+                if en.target == null
+                or en.target.entity_type == EntityType.asteroid
+                    en.target = bullet.emitter;
+
+                if player and bullet.emitter == player  player.target = en;
 
                 // en.color_additive = {1, 1, 1, 0};
                 en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
@@ -730,56 +736,19 @@ void update_world() {
         let en = query_entity(mouse_world_pos);
         if en and en.entity_type == EntityType.ship {
             player = en;
+            player.team_id = team_id_player;
         }
     }
 
     draw_background(camera.pos);
 
-    if true {
-        // ivec2 chunk_coord = get_chunk_coord(player.tr.pos);
-        ivec2 chunk_coord = get_chunk_coord(camera.pos);
+    sort_entities_into_chunks();
 
-        ivec2[] chunk_coord_offsets = { {0, 0}, {1, 0}, {0, 1}, {1, 1} };
-        Chunk*[] chunks = {*chunk_1, *chunk_2, *chunk_3, *chunk_4};
-        int32 coord_index = 0;
-        ivec2[] coords = {{},{},{},{}};
-
-        for it : 0 .. 4 {
-            ivec2 coord = add(chunk_coord, chunk_coord_offsets[it]);
-
-            if      equals(coord, chunk_1.coord) { chunks[0] = null; continue; }
-            else if equals(coord, chunk_2.coord) { chunks[1] = null; continue; }
-            else if equals(coord, chunk_3.coord) { chunks[2] = null; continue; }
-            else if equals(coord, chunk_4.coord) { chunks[3] = null; continue; }
-            else {
-                coords[coord_index++] = coord;
-            }
-        }
-
-        coord_index = 0;
-        for 0 .. chunks.length {
-            if chunks[it] == null  continue;
-
-            spawn_chunk(chunks[it], coords[coord_index++]);
-        }
+    for 0 .. entity_pool.count {
+        let e = *entity_pool.data[it];
+        if is_dead(e) continue;
+        update_entity(e);
     }
-
-
-
-    void update_entity_list(EntityPool* pool) {
-        for 0 .. pool.count {
-            let e = *pool.data[it];
-            if is_dead(e) continue;
-            update_entity(e);
-        }
-    }
-
-    update_entity_list(*entity_pool);
-    update_entity_list(*chunk_1.entity_pool);
-    update_entity_list(*chunk_2.entity_pool);
-    update_entity_list(*chunk_3.entity_pool);
-    update_entity_list(*chunk_4.entity_pool);
-
 
     bind(projectile);
     for 0 .. list_length(bullets) {
@@ -811,7 +780,7 @@ void update_world() {
         bullet.pos = pos_end;
         bullet.life_time += dt;
 
-        if bullet.life_time > 1.3 {
+        if bullet.life_time > 0.7 {
             list_unordered_remove(bullets, it as uint32);
             it--;
             continue;
@@ -819,13 +788,7 @@ void update_world() {
     }
 
 
-
     cleanup_pool(*entity_pool);
-    cleanup_pool(*chunk_1.entity_pool);
-    cleanup_pool(*chunk_2.entity_pool);
-    cleanup_pool(*chunk_3.entity_pool);
-    cleanup_pool(*chunk_4.entity_pool);
-
 
     update_particles();
 }
@@ -845,38 +808,123 @@ void draw_background(vec2 center) {
         tr.rot = random(seed++) * Pi;
         tr.scale = 1.0;
 
-        draw_sprite(tr, depth, sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32]);
+        Sprite sprite;
+        if random(seed++) < 0 {
+            sprite = sprite_cloud;
+        } else {
+            sprite = sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32];
+        }
+        draw_sprite(tr, depth, sprite);
     }
 }
 
-const chunk_size = 2000;
-
-Chunk chunk_1 = init_chunk();
-Chunk chunk_2 = init_chunk();
-Chunk chunk_3 = init_chunk();
-Chunk chunk_4 = init_chunk();
-
+const chunk_size = 800;
+const chunk_count_sqrt = 5;
+const chunk_count = chunk_count_sqrt*chunk_count_sqrt;
+Chunk[chunk_count] chunks = {};
 
 struct Chunk {
     ivec2 coord;
-    EntityPool entity_pool;
     Entity*[..] entities;
 }
 
 ivec2 get_chunk_coord(vec2 pos) {
-    return make_ivec(mul(round2multiple(pos, chunk_size), 1.0 / chunk_size));
+    return make_ivec(round2multiple(pos, chunk_size) / chunk_size);
 }
 
-Chunk init_chunk() {
-    Chunk s = {};
-    s.coord = {999, 999}; // NOTE: this is to fix bug where chunk 0,0 wont generate at game start
-    s.entity_pool = init_pool();
-    return s;
+void init_chunks() {
+    for 0 .. chunk_count {
+        chunks[it].coord = {999, 999};
+        chunks[it].entities = list_create(sizeof Entity*);
+    }
+}
+
+Chunk* get_chunk_with_coord(ivec2 coord) {
+    for 0 .. chunk_count {
+        if equals(chunks[it].coord, coord) {
+            return *chunks[it];
+        }
+    }
+    return null;
+}
+
+void sort_entities_into_chunks() {
+
+    static ivec2 prev_center = {};
+    ivec2 center = get_chunk_coord(camera.pos);
+
+    if !equals(prev_center, center) {
+
+        prev_center = center;
+    }
+
+
+    Chunk*[..] recyclable = list_create(sizeof Chunk*);
+    ivec2[..] coords = list_create(sizeof ivec2);
+
+    const half = chunk_count_sqrt/2;
+
+    // get all valid coordinates that lack a chunk
+    for y: -half .. half+1 {
+        for x: -half .. half+1 {
+            ivec2 rel = {x, y};
+            ivec2 coord = center + rel;
+
+            let chunk = get_chunk_with_coord(coord);
+            if chunk == null  list_add(*coords, *coord);
+        }
+    }
+
+    // get all chunks with invalid coordinates
+    for 0 .. chunk_count {
+        let chunk = *chunks[it];
+        ivec2 rel = chunk.coord - center;
+        if rel.x < -half or rel.y < -half
+        or rel.x >  half or rel.y >  half {
+            list_add(*recyclable, *chunk);
+        }
+    }
+
+    uint32 len = list_length(coords);
+    if len == list_length(recyclable) {
+        for 0 .. len {
+            spawn_chunk(recyclable[it], coords[it]);
+        }
+    } else {
+        uint32 rec_len = list_length(recyclable);
+        print("[ERROR]: HOW DID THIS HAPPEN!? len(coords) = ", len, " len(recyclable) = ", rec_len, "\n");
+    }
+
+
+    list_delete(recyclable);
+    list_delete(coords);
+
+    Chunk*[chunk_count] chunks_sorted = {};
+    for y: -half .. half+1 {
+        for x: -half .. half+1 {
+            ivec2 rel = {x, y};
+            ivec2 coord = center + rel;
+
+            ivec2 i = rel + make_ivec2(chunk_count_sqrt/2);
+            let chunk = get_chunk_with_coord(coord);
+            chunks_sorted[i.y * chunk_count_sqrt + i.x] = chunk;
+            list_clear(chunk.entities);
+        }
+    }
+
+
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        ivec2 coord = get_chunk_coord(en.tr.pos);
+        en.chunk = get_chunk_with_coord(coord);
+        if en.chunk {
+            list_add(*en.chunk.entities, *en);
+        } else despawn(en);
+    }
 }
 
 void spawn_chunk(Chunk* chunk, ivec2 coord) {
     chunk.coord = coord;
-    chunk.entity_pool.count = 0;
 
     int32 seed = (coord.x & 0x0000FFFF) |
                 ((coord.y << 16) & 0xFFFF0000);
@@ -884,15 +932,16 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     // print("spawn chunk ", coord, " with seed: ", seed, "\n");
 
     const half = chunk_size / 2;
-    vec2 chunk_pos = make_vec(coord) * chunk_size - { half, half };
+    vec2 chunk_pos = make_vec(coord) * chunk_size;// - { half, half };
 
 
     if random(seed++) < 0 {
         vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
-        let ss = spawn_entity(*entity_pool, pos, sprite_spacestation);
+        let ss = spawn_entity(pos, sprite_spacestation);
         ss.entity_type = .station;
         ss.depth = 0.1;
         ss.tr.rot = random(seed++) * Pi;
+        ss.cargo_capacity = 100_000;
     }
 
 
@@ -901,7 +950,7 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
 
         uint32 asteroid_index = (random01(seed++) * sprites_asteroids_count) as uint32;
         vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
-        let en = spawn_asteroid(*entity_pool, pos, asteroid_index);
+        let en = spawn_asteroid(pos, asteroid_index);
         en.tr.rot = random(seed++) * Pi;
         en.depth = 0.01;
     }
