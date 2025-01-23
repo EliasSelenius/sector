@@ -128,29 +128,37 @@ struct SpaceshipType {
     Sprite sprite;
 
     uint32 cargo_capacity;
+
+    uint32 blueprints_required;
+    uint32 blueprints_acquired;
 }
 
-SpaceshipType[] spaceship_types = {
-    { name = "og",          thrusters = {}, sprite_index = 4, cargo_capacity = 40 },
-    { name = "small_cargo", thrusters = {}, sprite_index = 5, cargo_capacity = 60 },
-    { name = "small_moth",  thrusters = {}, sprite_index = 6, cargo_capacity = 40 },
-    { name = "new",         thrusters = {}, sprite_index = 7, cargo_capacity = 50 },
-    { name = "large_agile", thrusters = {}, sprite_index = 8, cargo_capacity = 35 },
-    { name = "idunno",      thrusters = {}, sprite_index = 10, cargo_capacity = 70 },
-    { name = "moth",        thrusters = {}, sprite_index = 11, cargo_capacity = 120 },
-    { name = "big",         thrusters = {}, sprite_index = 12, cargo_capacity = 150 },
-    { name = "cool",        thrusters = {}, sprite_index = 13, cargo_capacity = 55 }
+SpaceshipType[] ship_types = {
+    { name = "og",          thrusters = {}, sprite_index = 4,   cargo_capacity = 40,    blueprints_required = 5 },
+    { name = "small_cargo", thrusters = {}, sprite_index = 5,   cargo_capacity = 60,    blueprints_required = 5 },
+    { name = "small_moth",  thrusters = {}, sprite_index = 6,   cargo_capacity = 40,    blueprints_required = 5 },
+    { name = "new",         thrusters = {}, sprite_index = 7,   cargo_capacity = 50,    blueprints_required = 5 },
+    { name = "large_agile", thrusters = {}, sprite_index = 8,   cargo_capacity = 35,    blueprints_required = 5 },
+    { name = "idunno",      thrusters = {}, sprite_index = 10,  cargo_capacity = 70,    blueprints_required = 5 },
+    { name = "moth",        thrusters = {}, sprite_index = 11,  cargo_capacity = 120,   blueprints_required = 5 },
+    { name = "big",         thrusters = {}, sprite_index = 12,  cargo_capacity = 150,   blueprints_required = 5 },
+    { name = "cool",        thrusters = {}, sprite_index = 13,  cargo_capacity = 55,    blueprints_required = 5 }
 };
 
+bool is_unlocked(SpaceshipType* st) return st.blueprints_acquired >= st.blueprints_required;
+
 enum EntityType {
-    none; // default no behaviour
+    none;            // default no behaviour
     ready_for_reuse; // dead entities will be marked ready for reuse
-    ship; turret;
-    station; asteroid;
+    ship;
+    turret;
+    station;
+    asteroid;
     item;
     missile;
     debris;
     shockwave;
+    blueprint;
 }
 
 struct Entity {
@@ -158,6 +166,8 @@ struct Entity {
     Entity* target;
 
     Chunk* chunk;
+
+    SpaceshipType* ship_type;
 
     EntityType entity_type;
     Agent_Behaviour behaviour;
@@ -208,6 +218,11 @@ void despawn(Entity* en) {
     en.hp = 0;
 }
 
+float32 get_collider_radius(Sprite sprite) {
+    let size = get_sprite_pixel_size(sprite);
+    return min(size.x, size.y) / 2;
+}
+
 // initializes entity data with sensible defaults, some based on sprite
 Entity* spawn_entity(vec2 pos, Sprite sprite) {
     let en = entity_new(*entity_pool);
@@ -217,9 +232,9 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
     en.sprite = sprite;
     en.color_factor = vec4_one;
 
-    let size = get_sprite_pixel_size(sprite);
-    en.collider_radius = min(size.x, size.y) * en.tr.scale / 2;
+    en.collider_radius = get_collider_radius(sprite);
 
+    let size = get_sprite_pixel_size(sprite);
     en.max_hp = max((size.x + size.y) / 20, 1);
     en.hp = en.max_hp;
     en.mass = size.x * size.y;
@@ -227,17 +242,18 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
 }
 
 Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
-    let sst = spaceship_types[ship_type];
+    let st = *ship_types[ship_type];
 
-    let en = spawn_entity(pos, sst.sprite);
+    let en = spawn_entity(pos, st.sprite);
     en.entity_type = .ship;
+    en.ship_type = st;
 
     en.max_hp *= 6;
     en.hp = en.max_hp;
     en.team_id = team_id;
 
     en.tr.rot = random(global_seed++) * Pi;
-    en.cargo_capacity = sst.cargo_capacity;
+    en.cargo_capacity = st.cargo_capacity;
     // TODO: this should work: ({.Rock, 10} as Item)
     add_item(en, {ItemKind.Rock, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
@@ -261,7 +277,7 @@ Entity* spawn_enemy(vec2 pos) {
     static uint32 ships_index = 0;
     static uint32 team_id = 3;
 
-    let en = spawn_ship(pos, ships_index++ % spaceship_types.length, team_id++);
+    let en = spawn_ship(pos, ships_index++ % ship_types.length, team_id++);
     return en;
 }
 
@@ -284,6 +300,8 @@ Entity* spawn_item(vec2 pos, Item item) {
     let en = spawn_entity(pos, sprites_items[item.kind]);
     en.entity_type = .item;
     en.item = item;
+    en.depth = -0.001;
+    en.cooldown = 0.6;
     return en;
 }
 
@@ -307,9 +325,21 @@ Entity* spawn_shockwave(vec2 pos) {
     return en;
 }
 
+Entity* spawn_blueprint(vec2 pos, SpaceshipType* st) {
+    let en = spawn_entity(pos, st.sprite);
+    en.entity_type = .blueprint;
+    en.ship_type = st;
+    en.depth = -0.001;
+    en.color_factor = { 0.1, 0.2, 1, 0.8 };
+
+    float32 radius = 6;
+    en.tr.scale = (1 / en.collider_radius) * radius;
+    en.collider_radius = radius;
+    return en;
+}
 
 void accelerate(Entity* e, vec2 acc) {
-    e.vel = add(e.vel, mul(acc, deltatime()));
+    e.vel = e.vel + acc * deltatime();
 }
 
 void apply_impulse(Entity* en, vec2 impulse) {
@@ -331,7 +361,7 @@ void thrust(Entity* e, vec2 dir) {
     let imp = force * dt;     // Ns
 
     // TODO: hack!
-    if e.entity_type == EntityType.missile  imp = imp * 2;
+    if e.entity_type == EntityType.missile  imp = imp * 6;
 
     apply_impulse(e, imp);
 
@@ -415,6 +445,11 @@ void on_destroy(Entity* en) {
                 debris.ang_vel = random(global_seed++) * 0.6;
                 debris.tr.rot = en.tr.rot;
             }
+
+            if !is_unlocked(en.ship_type) {
+                print("spawned blueprint\n");
+                spawn_blueprint(en.tr.pos, en.ship_type);
+            }
         } break;
 
         case .turret: {
@@ -462,6 +497,23 @@ void on_destroy(Entity* en) {
     }
 }
 
+Entity* attempt_pickup_item(Entity* item) {
+    let pickers = all_entities_in_radius(item, item.collider_radius * 3);
+    for 0 .. pickers.length {
+        let picker = pickers[it];
+        if is_dead(picker) continue;
+        if  picker.entity_type != EntityType.ship
+        and picker.entity_type != EntityType.station  continue;
+
+        accelerate(item, noz(picker.tr.pos - item.tr.pos) * 100);
+        if circle_dist(item, picker.tr.pos, 6) < 0 {
+            return picker;
+        }
+    }
+
+    return null;
+}
+
 void update_entity(Entity* en) {
     let dt = deltatime();
     en.tr.pos = en.tr.pos + en.vel * dt;
@@ -484,15 +536,26 @@ void update_entity(Entity* en) {
         } break;
 
         case .item: {
-            let pickers = closest_entities(en, en.collider_radius);
-            for 0 .. pickers.length {
-                let picker = pickers[it];
-                if picker.entity_type == EntityType.ship
-                or picker.entity_type == EntityType.station {
-                    if picker == en.target and en.cooldown > 0 continue;
+            if en.cooldown <= 0 {
+                Transform2D tr = en.tr;
+                tr.scale = 0.1;
+                draw_sprite(tr, en.depth, sprite_shockwave);
 
+                let picker = attempt_pickup_item(en);
+                if picker {
                     pickup(picker, en);
-                    break;
+                    for 0 .. 6 {
+                        vec2    p_vel     = en.vel + random_vec2(20);
+                        float32 size      = random_range(0.1, 0.6);
+                        float32 rot       = random(global_seed++) * Pi;
+                        float32 ang_vel   = 1;
+                        float32 life_time = random_range(0.1, 0.6);
+                        vec4    color     = vec4_one;
+                        uint32  flags     = 0;
+
+                        let p = make_particle(en.tr.pos, p_vel, size, rot, ang_vel, life_time, color, flags);
+                        spawn_particle(p);
+                    }
                 }
             }
         } break;
@@ -508,12 +571,15 @@ void update_entity(Entity* en) {
 
             if en.target {
                 turn_to(en, en.target.tr.pos);
+                float32 a = angle(up(en.tr), en.target.tr.pos - en.tr.pos);
+                print(a, "\n");
+                if a < Pi/2  thrust(en, vec2_unit_y);
             } else {
+                thrust(en, vec2_unit_y);
+
                 let closest = closest_entity(en, EntityType.ship);
                 if closest.team_id != en.team_id  en.target = closest;
             }
-
-            thrust(en, vec2_unit_y);
 
             let inter_en = first_intersecting_entity(en, EntityType.ship);
             if inter_en and inter_en.team_id != en.team_id {
@@ -529,21 +595,38 @@ void update_entity(Entity* en) {
             en.color_factor.w = clamp(en.cooldown, 0, 1);
             if en.cooldown <= 0 en.hp = 0;
 
-            let ens = closest_entities(en, en.collider_radius * en.tr.scale);
+            let ens = all_entities_in_radius(en, en.collider_radius * en.tr.scale);
             for 0 .. ens.length {
                 let e = ens[it];
+
+                if e.entity_type == EntityType.blueprint continue;
+
                 e.color_additive = { 1, 1, 1, 0 } * 0.1;
 
-                vec2 force = normalize_or(e.tr.pos - en.tr.pos, vec2_one) * 4000 * e.collider_radius*2;
-
+                vec2 force = noz(e.tr.pos - en.tr.pos) * 4000 * e.collider_radius*2;
                 apply_impulse(e, force*dt);
             }
+        } break;
+
+        case .blueprint: {
+            en.tr.rot += dt;
+            let picker = attempt_pickup_item(en);
+            if picker != null and picker == player {
+                en.ship_type.blueprints_acquired++;
+                despawn(en);
+            }
+
+            Transform2D tr = en.tr;
+            tr.rot = 0;
+            draw_sprite(tr, en.depth, sprite_shockwave, en.color_factor, en.color_additive);
         } break;
 
         default: break;
     }
 
-    if en.entity_type != EntityType.shockwave {
+    if en.entity_type == EntityType.shockwave
+    or en.entity_type == EntityType.blueprint;
+    else {
         for 0 .. list_length(bullets) {
             let bullet = bullets[it];
             if bullet.team_id == en.team_id continue;
@@ -597,6 +680,8 @@ float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
 }
 
 float32 circle_dist(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius);
+float32 circle_dist(Entity* e0, vec2 p1, float32 r1) return circle_dist(e0.tr.pos, e0.collider_radius, p1, r1);
+
 float32 entity_intersects(Entity* e0, e1) return circle_dist(e0, e1) < 0;
 
 Entity* query_entity(vec2 pos) {
@@ -626,9 +711,9 @@ Entity* closest_entity(Entity* self, EntityType et) {
     return result;
 }
 
-Entity*[] closest_entities(vec2 pos, float32 radius) return closest_entities(pos, null, radius);
-Entity*[] closest_entities(Entity* self, float32 radius) return closest_entities(self.tr.pos, self, radius);
-Entity*[] closest_entities(vec2 pos, Entity* self, float32 radius) {
+Entity*[] all_entities_in_radius(vec2 pos, float32 radius) return all_entities_in_radius(pos, null, radius, -1);
+Entity*[] all_entities_in_radius(Entity* self, float32 radius) return all_entities_in_radius(self.tr.pos, self, radius, -1);
+Entity*[] all_entities_in_radius(vec2 pos, Entity* self, float32 radius, int64 max_count) {
 
     static Entity*[..] list = list_create(sizeof Entity*);
     list_clear(list);
@@ -637,7 +722,10 @@ Entity*[] closest_entities(vec2 pos, Entity* self, float32 radius) {
         let en = *entity_pool.data[it];
         if en == self or is_dead(en) continue;
         // if sqdist(pos, en.tr.pos) < radius*radius   list_add(*list, *en);
-        if circle_dist(pos, radius, en.tr.pos, en.collider_radius*en.tr.scale) < 0   list_add(*list, *en);
+        if circle_dist(pos, radius, en.tr.pos, en.collider_radius*en.tr.scale) < 0 {
+            list_add(*list, *en);
+            if list_length(list) == max_count break;
+        }
     }
 
     Entity*[] result = {}; // TODO: Entity[..] should implicitly convert to Entity[]
@@ -697,7 +785,7 @@ void update_world() {
             spawn_missile(player);
         }
 
-        if key_pressed('Q') drop_cargo(player, 5);
+        if key_pressed('Q') drop_cargo(player, 2);
 
         // const font_size = 0.1;
         // vec2 pos = {-1, 1 - font_size / 2};
@@ -723,13 +811,15 @@ void update_world() {
 
 
     if mouse_pressed(Right_Mouse) {
-        let e = spawn_enemy(mouse_world_pos);
+        // let e = spawn_enemy(mouse_world_pos);
         // let e = spawn_shockwave(mouse_world_pos);
         // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
 
         // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
 
         // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
+
+        spawn_blueprint(mouse_world_pos, *ship_types[0]);
     }
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
@@ -794,7 +884,7 @@ void update_world() {
 }
 
 void draw_background(vec2 center) {
-    const s = 10;
+    const s = 30;
     const spacing = 160;
     for x : -s .. s+1 for y : -s .. s+1 {
         ivec2 p_seed = make_ivec(round2multiple(center, spacing));
@@ -808,13 +898,22 @@ void draw_background(vec2 center) {
         tr.rot = random(seed++) * Pi;
         tr.scale = 1.0;
 
+        vec4 color = vec4_one;
         Sprite sprite;
         if random(seed++) < 0 {
             sprite = sprite_cloud;
+            tr.scale = {4, 4};
+            tr.rot = app.total_run_time * random(seed++) * 0.05;
+            float32 l = 0.5;
+            vec4[] array = { {1,l,l,1}, {1,1,l,1}, {l,1,l,1}, {l,1,1,1}, {l,l,1,1}, {1,l,1,1} };
+            color = array[(random01(seed++)*array.length) as int32] * 1.5;
         } else {
             sprite = sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32];
         }
-        draw_sprite(tr, depth, sprite);
+
+        float32 a = s*spacing;
+        color.w = 1 - expf((length(tr.pos - center) - a) / (a/4));
+        draw_sprite(tr, depth, sprite, color, vec4_zero);
     }
 }
 
@@ -822,6 +921,11 @@ const chunk_size = 800;
 const chunk_count_sqrt = 5;
 const chunk_count = chunk_count_sqrt*chunk_count_sqrt;
 Chunk[chunk_count] chunks = {};
+
+ivec2 get_region_coord(vec2 pos) {
+    const region_size = chunk_size * chunk_count_sqrt;
+    return make_ivec(round2multiple(pos, region_size) / region_size);
+}
 
 struct Chunk {
     ivec2 coord;
@@ -935,7 +1039,7 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     vec2 chunk_pos = make_vec(coord) * chunk_size;// - { half, half };
 
 
-    if random(seed++) < 0 {
+    if random01(seed++) < 0.1 {
         vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
         let ss = spawn_entity(pos, sprite_spacestation);
         ss.entity_type = .station;
