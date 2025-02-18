@@ -21,3 +21,4 @@ output.exp
 *.ilk
 *.pdb
 shader_debug_log_*.txt
+save.bin

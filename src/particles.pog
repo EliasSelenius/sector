@@ -143,7 +143,7 @@ void update_particles() {
         float32 size = lerp(t, p.size_start, p.size_end);
 
         Transform2D tr = { pos = p.pos, rot = p.rot, scale = size };
-        draw_texture(tr, -0.001, p.tex, color, vec4_zero);
+        draw_texture(tr, -0.001, p.tex, true, color, vec4_zero);
 
         p.elapsed_lifetime += dt;
 

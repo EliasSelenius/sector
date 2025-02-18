@@ -60,8 +60,13 @@ void agent_goto(Entity* en, vec2 pos) {
 }
 
 void agent_attack(Entity* en, target) {
-    turn_to(en, target.tr.pos);
     let dist = circle_dist(en, target);
+
+    float32 seconds = dist / bullet_muzzle_speed;
+    let target_pos = target.tr.pos + target.vel * seconds;
+
+    turn_to(en, target_pos);
+    // look_at(*en.tr, target_pos);
 
     if dist < 15*16  fire_gun(en);
 

@@ -117,7 +117,7 @@ const team_id_player = 1;
 
 Bullet* bullets = list_create(sizeof Bullet);
 
-Transform2D camera = {0,0, 0, 10};
+Transform2D world_camera = {0,0, 0, 10};
 
 struct SpaceshipType {
     char* name;
@@ -127,23 +127,41 @@ struct SpaceshipType {
     uint32 sprite_index;
     Sprite sprite;
 
+    uint32 hp;
     uint32 cargo_capacity;
+    uint32 build_cost;
 
     uint32 blueprints_required;
     uint32 blueprints_acquired;
+
 }
 
+const Ship_Type_Count = 10;
 SpaceshipType[] ship_types = {
-    { name = "og",          thrusters = {}, sprite_index = 4,   cargo_capacity = 40,    blueprints_required = 5 },
-    { name = "small_cargo", thrusters = {}, sprite_index = 5,   cargo_capacity = 60,    blueprints_required = 5 },
-    { name = "small_moth",  thrusters = {}, sprite_index = 6,   cargo_capacity = 40,    blueprints_required = 5 },
-    { name = "new",         thrusters = {}, sprite_index = 7,   cargo_capacity = 50,    blueprints_required = 5 },
-    { name = "large_agile", thrusters = {}, sprite_index = 8,   cargo_capacity = 35,    blueprints_required = 5 },
-    { name = "idunno",      thrusters = {}, sprite_index = 10,  cargo_capacity = 70,    blueprints_required = 5 },
-    { name = "moth",        thrusters = {}, sprite_index = 11,  cargo_capacity = 120,   blueprints_required = 5 },
-    { name = "big",         thrusters = {}, sprite_index = 12,  cargo_capacity = 150,   blueprints_required = 5 },
-    { name = "cool",        thrusters = {}, sprite_index = 13,  cargo_capacity = 55,    blueprints_required = 5 }
+    { name = "humble",      sprite_index = 4,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0 },
+    { name = "small_cargo", sprite_index = 5,   hp = 25, cargo_capacity = 60,   build_cost = 90,  blueprints_required = 1 },
+    { name = "small_moth",  sprite_index = 6,   hp = 35, cargo_capacity = 40,   build_cost = 125, blueprints_required = 3 },
+    { name = "new",         sprite_index = 7,   hp = 50, cargo_capacity = 50,   build_cost = 300, blueprints_required = 4 },
+    { name = "large_agile", sprite_index = 8,   hp = 60, cargo_capacity = 35,   build_cost = 300, blueprints_required = 5 },
+    { name = "idunno",      sprite_index = 10,  hp = 60, cargo_capacity = 70,   build_cost = 300, blueprints_required = 5 },
+    { name = "moth",        sprite_index = 11,  hp = 60, cargo_capacity = 120,  build_cost = 300, blueprints_required = 5 },
+    { name = "big",         sprite_index = 12,  hp = 60, cargo_capacity = 150,  build_cost = 300, blueprints_required = 5 },
+    { name = "cool",        sprite_index = 13,  hp = 60, cargo_capacity = 55,   build_cost = 300, blueprints_required = 5 },
+    { name = "ftl_test",    sprite_index = 0,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0 }
 };
+
+
+SpaceshipType* get_ship_by_level(uint32 level) {
+
+    uint32[2][3] count_by_level = {
+        {0,4}, {4,3}, {7,2}
+    };
+
+    let index = min(level, 2);
+    let range_min = count_by_level[index][0];
+    let range_max = count_by_level[index][1] + range_min - 1;
+    return *ship_types[round(random_range(range_min, range_max)) as uint32];
+}
 
 bool is_unlocked(SpaceshipType* st) return st.blueprints_acquired >= st.blueprints_required;
 
@@ -241,14 +259,14 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
     return en;
 }
 
-Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
-    let st = *ship_types[ship_type];
+Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) return spawn_ship(pos, *ship_types[ship_type], team_id);
+Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     let en = spawn_entity(pos, st.sprite);
     en.entity_type = .ship;
     en.ship_type = st;
 
-    en.max_hp *= 6;
+    en.max_hp = st.hp;
     en.hp = en.max_hp;
     en.team_id = team_id;
 
@@ -257,7 +275,7 @@ Entity* spawn_ship(vec2 pos, uint32 ship_type, team_id) {
     // TODO: this should work: ({.Rock, 10} as Item)
     add_item(en, {ItemKind.Rock, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
-    if ship_type == 5 {
+    if st == *ship_types[5] {
         let turret = spawn_entity(vec2_zero, sprite_turret);
         turret.entity_type = .turret;
         turret.parent = en;
@@ -274,10 +292,10 @@ Entity* spawn_player() {
 }
 
 Entity* spawn_enemy(vec2 pos) {
-    static uint32 ships_index = 0;
     static uint32 team_id = 3;
 
-    let en = spawn_ship(pos, ships_index++ % ship_types.length, team_id++);
+    let st = get_ship_by_level(get_level(pos));
+    let en = spawn_ship(pos, st, team_id++);
     return en;
 }
 
@@ -342,6 +360,10 @@ void accelerate(Entity* e, vec2 acc) {
     e.vel = e.vel + acc * deltatime();
 }
 
+void ang_accelerate(Entity* en, float32 acc) {
+    en.ang_vel += acc * deltatime();
+}
+
 void apply_impulse(Entity* en, vec2 impulse) {
     en.vel = en.vel + impulse / en.mass;
 }
@@ -390,12 +412,21 @@ void turn_to(Entity* e, vec2 target) {
     diff = rotate_vec(diff, -e.tr.rot);
     float32 angle = vec2_to_angle(diff);
 
+
     e.ang_vel = angle * 3;
+
+    // let seconds = angle / e.ang_vel;
+
+    // // if angle == 0 then ang_vel = 0;
+
+    // // rot + ang_vel * seconds = rot + angle
+
+    // ang_accelerate(e, )
 }
 
+const bullet_muzzle_speed = 800;
+const bullet_random_muzzle_speed = 48;
 void fire_gun(Entity* e) {
-    const bullet_muzzle_speed = 800;
-    const bullet_random_muzzle_speed = 48;
 
     if e.cooldown <= 0 {
         let dir = up(e.tr);
@@ -408,7 +439,8 @@ void fire_gun(Entity* e) {
         bullet.team_id = e.team_id;
         list_add(*bullets, *bullet);
 
-        e.cooldown = 0.25;
+        // e.cooldown = 0.25;
+        e.cooldown = 0.1;
 
         uint32 num_p = 10;
         for 0 .. num_p {
@@ -447,7 +479,6 @@ void on_destroy(Entity* en) {
             }
 
             if !is_unlocked(en.ship_type) {
-                print("spawned blueprint\n");
                 spawn_blueprint(en.tr.pos, en.ship_type);
             }
         } break;
@@ -611,13 +642,14 @@ void update_entity(Entity* en) {
         case .blueprint: {
             en.tr.rot += dt;
             let picker = attempt_pickup_item(en);
-            if picker != null and picker == player {
+            if picker and picker == player {
                 en.ship_type.blueprints_acquired++;
                 despawn(en);
             }
 
             Transform2D tr = en.tr;
             tr.rot = 0;
+            tr.scale = (1 / get_collider_radius(sprite_shockwave)) * en.collider_radius * 2;
             draw_sprite(tr, en.depth, sprite_shockwave, en.color_factor, en.color_additive);
         } break;
 
@@ -665,7 +697,7 @@ void update_entity(Entity* en) {
         }
     }
 
-    DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : quad_db;
+    DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
     draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive);
 
     en.color_additive = exp_decay(en.color_additive, vec4_zero, 10, dt);
@@ -752,7 +784,7 @@ void update_world() {
 
     if key_pressed(GLFW_KEY_SPACE)  player = null;
 
-    { // camera controlls:
+    { // world_camera controlls:
         static vec2 target_cam_pos = {};
         static float32 target_cam_zoom = 160;
 
@@ -769,12 +801,12 @@ void update_world() {
             target_cam_pos = target_cam_pos + Input.wasd * target_cam_zoom / 100;
         }
 
-        camera.pos = exp_decay(camera.pos, target_cam_pos, 4, dt);
-        camera.scale = exp_decay(camera.scale, target_cam_scale, 5, dt);
+        world_camera.pos = exp_decay(world_camera.pos, target_cam_pos, 4, dt);
+        world_camera.scale = exp_decay(world_camera.scale, target_cam_scale, 5, dt);
     }
 
-    vec2 mouse_world_pos = get_mouse_world_coord(camera);
-    // apply_camera(camera);
+    vec2 mouse_world_pos = get_mouse_world_coord(world_camera);
+    // apply_camera(world_camera);
 
 
     if player {
@@ -819,18 +851,19 @@ void update_world() {
 
         // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
 
-        spawn_blueprint(mouse_world_pos, *ship_types[0]);
+        static uint32 index = 0;
+        spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
     }
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
         let en = query_entity(mouse_world_pos);
-        if en and en.entity_type == EntityType.ship {
+        if en and en.entity_type == EntityType.ship and is_unlocked(en.ship_type) {
             player = en;
             player.team_id = team_id_player;
         }
     }
 
-    draw_background(camera.pos);
+    draw_background(world_camera.pos);
 
     sort_entities_into_chunks();
 
@@ -840,7 +873,6 @@ void update_world() {
         update_entity(e);
     }
 
-    bind(projectile);
     for 0 .. list_length(bullets) {
         let bullet = *bullets[it];
         if bullet.emitter and is_dead(bullet.emitter) bullet.emitter = null;
@@ -907,12 +939,13 @@ void draw_background(vec2 center) {
             float32 l = 0.5;
             vec4[] array = { {1,l,l,1}, {1,1,l,1}, {l,1,l,1}, {l,1,1,1}, {l,l,1,1}, {1,l,1,1} };
             color = array[(random01(seed++)*array.length) as int32] * 1.5;
+
+            float32 a = s*spacing;
+            color.w = 1 - expf((length(tr.pos - center) - a) / (a/4));
         } else {
             sprite = sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32];
         }
 
-        float32 a = s*spacing;
-        color.w = 1 - expf((length(tr.pos - center) - a) / (a/4));
         draw_sprite(tr, depth, sprite, color, vec4_zero);
     }
 }
@@ -922,9 +955,14 @@ const chunk_count_sqrt = 5;
 const chunk_count = chunk_count_sqrt*chunk_count_sqrt;
 Chunk[chunk_count] chunks = {};
 
-ivec2 get_region_coord(vec2 pos) {
-    const region_size = chunk_size * chunk_count_sqrt;
-    return make_ivec(round2multiple(pos, region_size) / region_size);
+const sector_size = chunk_size * chunk_count_sqrt;
+vec2 get_sector_coord(vec2 pos) {
+    return round2multiple(pos, sector_size) / sector_size;
+}
+
+uint32 get_level(vec2 pos) {
+    let coord = get_sector_coord(pos);
+    return (abs(coord.x) + abs(coord.y)) as uint32;
 }
 
 struct Chunk {
@@ -955,7 +993,7 @@ Chunk* get_chunk_with_coord(ivec2 coord) {
 void sort_entities_into_chunks() {
 
     static ivec2 prev_center = {};
-    ivec2 center = get_chunk_coord(camera.pos);
+    ivec2 center = get_chunk_coord(world_camera.pos);
 
     if !equals(prev_center, center) {
 
