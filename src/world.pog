@@ -705,12 +705,6 @@ void update_entity(Entity* en) {
     if is_dead(en) on_destroy(en);
 }
 
-float32 circle_dist(vec2 p0, float32 r0, vec2 p1, float32 r1) {
-    let len = length(sub(p0, p1));
-    let r = r0 + r1;
-    return len - r;
-}
-
 float32 circle_dist(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius);
 float32 circle_dist(Entity* e0, vec2 p1, float32 r1) return circle_dist(e0.tr.pos, e0.collider_radius, p1, r1);
 
