@@ -283,6 +283,10 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
         turret.depth = -0.01;
     }
 
+    if st == *ship_types[9] {
+        en.depth = 0.1;
+    }
+
     return en;
 }
 
@@ -439,8 +443,8 @@ void fire_gun(Entity* e) {
         bullet.team_id = e.team_id;
         list_add(*bullets, *bullet);
 
-        // e.cooldown = 0.25;
-        e.cooldown = 0.1;
+        e.cooldown = 0.25;
+        // e.cooldown = 0.1;
 
         uint32 num_p = 10;
         for 0 .. num_p {
@@ -841,12 +845,12 @@ void update_world() {
         // let e = spawn_shockwave(mouse_world_pos);
         // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
 
-        // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
+        spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
 
         // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
 
-        static uint32 index = 0;
-        spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
+        // static uint32 index = 0;
+        // spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
     }
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
@@ -1088,7 +1092,6 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
         vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
         let en = spawn_asteroid(pos, asteroid_index);
         en.tr.rot = random(seed++) * Pi;
-        en.depth = 0.01;
     }
 
 

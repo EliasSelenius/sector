@@ -68,6 +68,16 @@ Priority:
         - render map
 
 
+idea:
+    only able to mine asteroids with a mining laser
+    laser can be upgraded to be able to:
+     - mine larger asteroids
+     - more ore yield from asteroids
+     - break asteroid faster
+     - range
+
+
+
 research audio implementations:
     - raylib source code
     - handmade hero?
@@ -292,7 +302,7 @@ void main() {
         if draw_list draw_entity_list();
 
         switch (game_view) {
-            case .World:
+            case .World: {
                 update_world();
                 draw_gui();
                 draw_map();
@@ -302,13 +312,13 @@ void main() {
                     camera_to_dispatch.scale = 200;
                     game_view = .Ship_Selection;
                 }
-                break;
+            } break;
 
             case .Outfitter: {
 
             } break;
 
-            case .Ship_Selection:
+            case .Ship_Selection: {
                 let st = ship_selection_menu();
                 if st {
                     if player_money >= st.build_cost {
@@ -317,7 +327,9 @@ void main() {
                         player = spawn_ship(vec2_zero, st, team_id_player);
                     }
                 }
-                break;
+
+                if key_pressed(GLFW_KEY_ENTER) game_view = .World;
+            } break;
 
             case .Tech_Tree: break;
 
@@ -394,8 +406,6 @@ SpaceshipType* ship_selection_menu() {
 
         draw_text(tr.pos + make_vec(-stride/2, -height/2), glyph_height, st.name, White);
     }
-
-    if key_pressed(GLFW_KEY_ENTER) game_view = .World;
 
     return result;
 }
