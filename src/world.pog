@@ -152,15 +152,7 @@ SpaceshipType[] ship_types = {
 
 
 SpaceshipType* get_ship_by_level(uint32 level) {
-
-    uint32[2][3] count_by_level = {
-        {0,4}, {4,3}, {7,2}
-    };
-
-    let index = min(level, 2);
-    let range_min = count_by_level[index][0];
-    let range_max = count_by_level[index][1] + range_min - 1;
-    return *ship_types[round(random_range(range_min, range_max)) as uint32];
+    return *ship_types[floor(random_range(0, min(level, ship_types.length))) as uint32];
 }
 
 bool is_unlocked(SpaceshipType* st) return st.blueprints_acquired >= st.blueprints_required;
@@ -352,7 +344,7 @@ Entity* spawn_blueprint(vec2 pos, SpaceshipType* st) {
     en.entity_type = .blueprint;
     en.ship_type = st;
     en.depth = -0.001;
-    en.color_factor = { 0.1, 0.2, 1, 0.8 };
+    en.color_factor = { 0.1, 0.2, 2, 0.8 };
 
     float32 radius = 6;
     en.tr.scale = (1 / en.collider_radius) * radius;
@@ -562,9 +554,28 @@ void update_entity(Entity* en) {
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
+    en.hp = 1;
+
     switch (en.entity_type) {
 
         case .ship: {
+
+            float32 prcnt = en.hp as float32 / en.max_hp;
+            if prcnt < 0.3 {
+                vec2    p_pos     = en.tr.pos + random_vec2(en.collider_radius);
+                vec2    p_vel     = en.vel + random_vec2(5);
+                float32 size      = random_range(1, 2);
+                float32 rot       = random(global_seed++) * Pi;
+                float32 ang_vel   = 1;
+                float32 life_time = 6;
+                vec4    color     = make_vec(0.1,0.1,0.1, 1);
+                uint32  flags     = 0;
+
+                let p = make_particle(p_pos, p_vel, size, rot, ang_vel, life_time, color, flags);
+                p.size_end = p.size_start * 2;
+                spawn_particle(p);
+            }
+
             if en != player {
                 update_ai(en);
             }

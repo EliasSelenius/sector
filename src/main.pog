@@ -29,7 +29,6 @@ include "src/agent.pog";
     - sector unique background color
     - higher value ore drop in higher level sectors
 
-    - destroying ships unlocks their blueprints
     - ships drop data
 
     - research-tree: use data to unlock ship components
@@ -40,6 +39,7 @@ include "src/agent.pog";
         shield_regen
         weapon
         tracktor beam
+        projectile deflection chance
 
     tracktor beam upgrades:
         - radius
