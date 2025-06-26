@@ -19,7 +19,6 @@ include "src/agent.pog";
     - dust particles floating in space
     - asteroid cluster distribution
 
-    - smoke particle on damaged ships
     - electric particle effect on damaged ships
 
     - semi-transparent ice asteroids
@@ -213,7 +212,7 @@ void main() {
     // { // test
     //     void test(uint32 i) {
     //         let f = @(*i as float32*);
-    //         print("float: ", f, " = ", f32_to_str(f), "\n");
+    //         print("float: ", f, " = ", to_string(f), "\n");
     //     }
 
     //     test(0x7f80_0000);
@@ -353,6 +352,7 @@ ThisFrameData this_frame;
 struct ThisFrameData {
     bool player_pickup_item;
     bool player_took_damage;
+    bool target_took_damage;
 }
 
 SpaceshipType* ship_selection_menu() {
@@ -458,6 +458,11 @@ Gui_Bar bar_player_health = {
     target_height = 0.07
 };
 
+Gui_Bar bar_target_health = {
+    target_color = color_to_vec4(rgba(0xFF_60_40_F0)),
+    target_height = 0.07
+};
+
 void draw_bar(Gui_Bar* bar, vec2 pos, float32 width, value, max_value) {
 
     float32 progress = value / max_value;
@@ -467,7 +472,7 @@ void draw_bar(Gui_Bar* bar, vec2 pos, float32 width, value, max_value) {
     vec2 size  = { width, bar.target_height };
     vec2 size2 = { width * progress, bar.height };
 
-    string float_str(float32 v) return trim_end(trim_end(f32_to_str(v), '0'), '.');
+    string float_str(float32 v) return trim_end(trim_end(to_string(v), '0'), '.');
 
     anchor = .bottom_left;
     draw_rect(pos, size, bar_bg);
@@ -486,8 +491,10 @@ void draw_bar(Gui_Bar* bar, vec2 pos, float32 width, value, max_value) {
 void draw_gui() {
     float32 height = 0.07;
 
-    if this_frame.player_took_damage  make_bar_jump(*bar_player_health);
     if this_frame.player_pickup_item  make_bar_jump(*bar_player_capacity);
+    if this_frame.player_took_damage  make_bar_jump(*bar_player_health);
+    if this_frame.target_took_damage  make_bar_jump(*bar_target_health);
+
 
     if player {
         vec2 pos = app.bottom_left + make_vec(height, height);
@@ -501,73 +508,29 @@ void draw_gui() {
         pos.y += height * 1.5;
         draw_bar(*bar_player_health, pos, width, player.hp, player.max_hp);
 
+        if player.target {
+            pos = app.bottom_right + make_vec(-height - width, height);
+            draw_bar(*bar_target_health, pos, width, player.target.hp, player.target.max_hp);
+
+            pos.y += height * 1.5;
+            draw_text(pos, height, entity_to_str(player.target), White);
+        }
     }
 
     draw_text(make_vec(0, -1 + height), height, vec_to_str(get_sector_coord(world_camera.pos)), White);
 }
 
-
-// TODO: compiler rtti
-char*[] entity_type_names = {
-    "none",
-    "ready_for_reuse",
-    "ship",
-    "turret",
-    "station",
-    "asteroid",
-    "item",
-    "missile",
-    "debris",
-    "shockwave",
-    "blueprint"
-};
-
-char* entity_to_str(Entity* en) {
-    return en ? entity_type_names[en.entity_type] : "null";
-}
-
-string f32_to_str(float32 f) return f32_to_str(temp_builder(), f);
-string f32_to_str(StringBuilder* sb, float32 f) {
-
-    uint32 bits = @(*f as uint32*);
-    // print("float: ", f, " bits: ", bits, "\n");
-
-    if bits&0x8000_0000  sb_append(sb, "-");
-
-    if bits == 0x7f80_0000 or bits == 0xff80_0000 {
-        sb_append(sb, "Infinity");
-        return to_string(sb);
-    }
-
-    if is_nan(f) {
-        sb_append(sb, "NaN");
-        return to_string(sb);
-    }
-
-    sb_append(sb, to_string(abs(f) as uint64));
-    sb_append(sb, ".");
-
-    let frac = to_string(round(fract(abs(f)) * 1_000_000) as uint64);
-    for 0 .. 6 - frac.length   sb_append(sb, '0');
-    sb_append(sb, frac);
-
-    return to_string(sb);
-}
-
 char* vec_to_str(vec2 v) return vec_to_str(temp_builder(), v);
 char* vec_to_str(StringBuilder* sb, vec2 v) {
-    f32_to_str(sb, v.x);
+    to_string(sb, v.x);
     sb_append(sb, ", ");
-    f32_to_str(sb, v.y);
+    to_string(sb, v.y);
     return sb.content;
 }
 
 void draw_entity_properties_menu(Entity* en) {
-
     if en == null return;
 
-
-    uint32 entity_id = (en as uint64 - entity_pool.data as uint64) / sizeof Entity;
 
     float32 text_height = 0.03;
 
@@ -575,7 +538,7 @@ void draw_entity_properties_menu(Entity* en) {
 
     // pos = (pos - world_camera.pos) / world_camera.scale;
 
-    pos = draw_text(pos, text_height, concat("ID              : ", to_string(entity_id), "\n"), White);
+    pos = draw_text(pos, text_height, concat("ID              : ", to_string(entity_index(en)), "\n"), White);
     pos = draw_text(pos, text_height, concat("parent          : ", entity_to_str(en.parent), "\n"), White);
     pos = draw_text(pos, text_height, concat("target          : ", entity_to_str(en.target), "\n"), White);
     pos = draw_text(pos, text_height, concat("entity_type     : ", entity_to_str(en), "\n"), White);
@@ -584,26 +547,26 @@ void draw_entity_properties_menu(Entity* en) {
     pos = draw_text(pos, text_height, concat("tr              : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("  .pos          : ", vec_to_str(en.tr.pos), "\n"), White);
 
-    // pos = draw_text(pos, text_height, concat("  .rot          : ", f32_to_str(en.tr.rot), "\n"), White);
+    // pos = draw_text(pos, text_height, concat("  .rot          : ", to_string(en.tr.rot), "\n"), White);
     pos = draw_text(pos, text_height, "  .rot          : ", White);
     field_float(*en.tr.rot, pos, text_height);
     pos.y -= text_height;
     pos.x = -1;
 
-    pos = draw_text(pos, text_height, concat("  .scale        : ", f32_to_str(en.tr.scale), "\n"), White);
-    pos = draw_text(pos, text_height, concat("depth           : ", f32_to_str(en.depth), "\n"), White);
+    pos = draw_text(pos, text_height, concat("  .scale        : ", to_string(en.tr.scale), "\n"), White);
+    pos = draw_text(pos, text_height, concat("depth           : ", to_string(en.depth), "\n"), White);
     pos = draw_text(pos, text_height, concat("sprite          : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("color_factor    : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("color_additive  : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("vel             : ", vec_to_str(en.vel), "\n"), White);
-    pos = draw_text(pos, text_height, concat("ang_vel         : ", f32_to_str(en.ang_vel), "\n"), White);
-    pos = draw_text(pos, text_height, concat("mass            : ", f32_to_str(en.mass), "\n"), White);
-    pos = draw_text(pos, text_height, concat("collider_radius : ", f32_to_str(en.collider_radius), "\n"), White);
+    pos = draw_text(pos, text_height, concat("ang_vel         : ", to_string(en.ang_vel), "\n"), White);
+    pos = draw_text(pos, text_height, concat("mass            : ", to_string(en.mass), "\n"), White);
+    pos = draw_text(pos, text_height, concat("collider_radius : ", to_string(en.collider_radius), "\n"), White);
     pos = draw_text(pos, text_height, concat("level           : ", to_string(en.level), "\n"), White);
-    pos = draw_text(pos, text_height, concat("hp              : ", f32_to_str(en.hp), "\n"), White);
-    pos = draw_text(pos, text_height, concat("max_hp          : ", f32_to_str(en.max_hp), "\n"), White);
+    pos = draw_text(pos, text_height, concat("hp              : ", to_string(en.hp), "\n"), White);
+    pos = draw_text(pos, text_height, concat("max_hp          : ", to_string(en.max_hp), "\n"), White);
     pos = draw_text(pos, text_height, concat("team_id         : ", to_string(en.level), "\n"), White);
-    pos = draw_text(pos, text_height, concat("cooldown        : ", f32_to_str(en.cooldown), "\n"), White);
+    pos = draw_text(pos, text_height, concat("cooldown        : ", to_string(en.cooldown), "\n"), White);
     pos = draw_text(pos, text_height, concat("cargo_capacity  : ", to_string(en.cargo_capacity), "\n"), White);
     pos = draw_text(pos, text_height, concat("cargo           : ", "", "\n"), White);
     pos = draw_text(pos, text_height, concat("item            : ", "", "\n"), White);
@@ -673,7 +636,7 @@ void field_float(float32* value, vec2 pos, float32 height) {
     // anchor = .bottom_left;
 
 
-    let text = f32_to_str(@value);
+    let text = to_string(@value);
     vec2 size = make_vec(height/2 * text.length, height);
 
     vec2 v = (Input.mouse_pos - pos);
