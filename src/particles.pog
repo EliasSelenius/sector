@@ -3,6 +3,8 @@
 const color_fire  = {1, 173.0 / 255.0, 10.0 / 255.0, 1} as vec4;
 const color_smoke = {64.0 / 255.0, 64.0 / 255.0, 64.0 / 255.0, 1} as vec4;
 const color_dust  = color_to_vec4(rgba(0x604040FF));
+const color_blueprint = { 0.1, 0.2, 2, 0.8 } as vec4;
+
 
 const ParticleFlag_SubEmitter = 1;
 

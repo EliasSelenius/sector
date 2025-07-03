@@ -20,6 +20,7 @@ include "src/agent.pog";
     - asteroid cluster distribution
 
     - electric particle effect on damaged ships
+    - overlay fire cracks on sprites for damaged ships
 
     - semi-transparent ice asteroids
 
@@ -120,6 +121,7 @@ Sprite sprite_shockwave;
 Sprite sprite_cloud;
 Sprite sprite_ftl_test;
 
+Wav_File wav_hallo;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -133,6 +135,8 @@ Sprite sprite_ftl_test;
 // }
 
 void loadassets() {
+
+    wav_hallo = load_wav("assets/hallo.wav");
 
 
     projectile = load_texture2D("assets/proj.bmp");
@@ -294,7 +298,9 @@ void main() {
 
     init_chunks();
 
+    audio_init(*wav_hallo);
     while grax_loop() {
+        audio_loop(*wav_hallo);
 
         static bool draw_list = false;
         if key_pressed(GLFW_KEY_F2) draw_list = !draw_list;
@@ -304,9 +310,9 @@ void main() {
             case .World: {
                 update_world();
                 draw_gui();
-                draw_map();
+                draw_minimap();
                 camera_to_dispatch = world_camera;
-                if key_pressed(GLFW_KEY_ENTER) {
+                if key_pressed(GLFW_KEY_TAB) {
                     camera_to_dispatch = {};
                     camera_to_dispatch.scale = 200;
                     game_view = .Ship_Selection;
@@ -318,6 +324,8 @@ void main() {
             } break;
 
             case .Ship_Selection: {
+
+
                 let st = ship_selection_menu();
                 if st {
                     if player_money >= st.build_cost {
@@ -326,8 +334,9 @@ void main() {
                         player = spawn_ship(vec2_zero, st, team_id_player);
                     }
                 }
+                draw_menu();
 
-                if key_pressed(GLFW_KEY_ENTER) game_view = .World;
+                if key_pressed(GLFW_KEY_TAB) game_view = .World;
             } break;
 
             case .Tech_Tree: break;
@@ -395,7 +404,7 @@ SpaceshipType* ship_selection_menu() {
 
             draw_text(tr.pos + make_vec(-stride/2, height/2), glyph_height, to_string(st.build_cost), Cyan);
         } else {
-            uint32 prct = (st.blueprints_acquired as float32 / st.blueprints_required * 100.0) as uint32;
+            uint32 prct = unlock_percent(st);
             let text = make_string(concat(to_string(prct), "%"));
             draw_text(tr.pos - make_vec(5*(text.length-1 as float32)/2.0, 0), glyph_height, text, White);
 
@@ -410,9 +419,22 @@ SpaceshipType* ship_selection_menu() {
     return result;
 }
 
-void draw_map() {
+void draw_menu() {
 
-    float32 scale = 0.1;
+    char*[] tabs = {"esc", "ships", "tech-tree", "map"};
+
+    vec2 pos = app.top_left;
+    anchor = .top_left;
+    for 0 .. tabs.length {
+        pos = pos + draw_text(pos, 0.1, tabs[it], White);
+        pos.x += 0.2;
+    }
+    anchor = .center;
+}
+
+void draw_minimap() {
+
+    float32 scale = 0.12;
     let center_sector = get_sector_coord(world_camera.pos);
     vec2 center = {1.2, 0.7};
     for y: -1 .. 2 {
@@ -431,8 +453,40 @@ void draw_map() {
         }
     }
 
-    draw_rect(center, make_vec2(0.1*scale), Red);
+    vec2 world2minimap(vec2 wpos) {
+        float32 scale = 0.12;
+        vec2 center = {1.2, 0.7};
+        return center + (wpos - world_camera.pos) / sector_size * scale;
+    }
 
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        if is_dead(en) continue;
+
+        Color color = Blue;
+        switch en.entity_type {
+            case .ship: color = Red; break;
+            case .station: color = Blue; break;
+            default: continue;
+        }
+
+        draw_rect(world2minimap(en.tr.pos), make_vec2(0.07*scale), color);
+    }
+
+    draw_rect(center, make_vec2(0.1*scale), Green);
+
+}
+
+struct Blueprint_Unlcok_Progress_Popup {
+    SpaceshipType* st;
+    float32 time;
+}
+
+Blueprint_Unlcok_Progress_Popup popup_blueprint;
+
+void popup_blueprint_progress(SpaceshipType* st) {
+    popup_blueprint.st = st;
+    popup_blueprint.time = 0;
 }
 
 struct Gui_Bar {
@@ -500,11 +554,19 @@ void draw_gui() {
         vec2 pos = app.bottom_left + make_vec(height, height);
         float32 width = 1;
 
+        uint32 cargo_amt = cargo_amount(player);
+        uint32 cargo_max = player.cargo_capacity;
+
         anchor = .bottom_left;
-        draw_text(pos + make_vec(width + height/2, 0), height, to_string(player_money), Cyan);
+        vec2 txt_pos = draw_text(pos + make_vec(width + height/2, 0), height, to_string(player_money), Cyan);
+        if cargo_amt == cargo_max {
+            float32 a = lerp((sinf(Tau * app.total_run_time as float32) + 1.0)*0.5, 0.1, 1);
+            Color flash_color = opacity(rgba(bar_player_capacity.target_color), a);
+            draw_text(txt_pos + make_vec(height, 0), height, "Drop Cargo: 'Q'", flash_color);
+        }
         anchor = .center;
 
-        draw_bar(*bar_player_capacity, pos, width, cargo_amount(player) as float32, player.cargo_capacity as float32);
+        draw_bar(*bar_player_capacity, pos, width, cargo_amt as float32, cargo_max as float32);
         pos.y += height * 1.5;
         draw_bar(*bar_player_health, pos, width, player.hp, player.max_hp);
 
@@ -517,7 +579,24 @@ void draw_gui() {
         }
     }
 
-    draw_text(make_vec(0, -1 + height), height, vec_to_str(get_sector_coord(world_camera.pos)), White);
+    if popup_blueprint.st {
+        let st = popup_blueprint.st;
+        let t  = popup_blueprint.time;
+
+        float32 t0 = clamp01(t*4);
+        float32 y = lerp(t0, -0.1, 0);
+
+        float32 opa = lerp(t0, 0, 0.75);
+
+        vec2 pos = make_vec(0, -0.5 + y);
+        draw_rect(pos, make_vec(1, 0.5), opacity(Black, opa));
+        draw_text(pos, 0.1, concat(to_string(unlock_percent(st)), "%"), opacity(White, opa));
+
+        popup_blueprint.time += deltatime();
+        if popup_blueprint.time > 5 {
+            popup_blueprint.st = null;
+        }
+    }
 }
 
 char* vec_to_str(vec2 v) return vec_to_str(temp_builder(), v);
