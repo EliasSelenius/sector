@@ -10,6 +10,7 @@ include "src/agent.pog";
 
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O3
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer
+// ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer -lkernel32 -lgdi32 -luser32 -lruntimeobject -lwinmm -ld3d11 -ldxguid -ld3dcompiler -lshlwapi -lole32 -lshcore -lavrt -lksuser -ldbghelp
 
 /*
     Civilization is flourishing in an asteroid field of abundant riches, and yet conflict is prevalent
@@ -122,6 +123,7 @@ Sprite sprite_cloud;
 Sprite sprite_ftl_test;
 
 Wav_File wav_hallo;
+Wav_File wav_debris_break;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -137,6 +139,7 @@ Wav_File wav_hallo;
 void loadassets() {
 
     wav_hallo = load_wav("assets/hallo.wav");
+    wav_debris_break = load_wav("assets/debris-break-253779.wav");
 
 
     projectile = load_texture2D("assets/proj.bmp");

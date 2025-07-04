@@ -530,6 +530,9 @@ void on_destroy(Entity* en) {
         } break;
 
         case .asteroid: {
+
+            audio_play(*wav_debris_break);
+
             if en.level {
                 for 0 .. 2 {
                     let a = spawn_asteroid(en.tr.pos, en.level - 1);
