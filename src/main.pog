@@ -51,8 +51,6 @@ include "src/agent.pog";
     - explosive charges
 
 Priority:
-    - spacestation
-    - drop cargo at spacestation -> cargo turns into money -> money buys bigger ships
 
     - improve AI
         - detection range
@@ -76,15 +74,6 @@ idea:
      - more ore yield from asteroids
      - break asteroid faster
      - range
-
-
-
-research audio implementations:
-    - raylib source code
-    - handmade hero?
-        - direct sound
-        - x audio
-    - sokol audio
 
 */
 
@@ -203,11 +192,12 @@ void loadassets() {
     sprite_cloud.is_semi_transparent = true;
 }
 
-enum Game_View {
-    World; Outfitter; Ship_Selection; Tech_Tree; Map;
-}
+enum Menu_Tabs { Ships; Cargo; Tech; Map; Esc; }
+char*[] tab_names = {"ships", "cargo", "tech", "map", "esc"};
+bool menu_open = false;
 
-Game_View game_view = .World;
+
+Menu_Tabs menu_tab = .Ships;
 Transform2D camera_to_dispatch;
 
 void on_event(AppEvent event, AppEventData data) switch event {
@@ -301,51 +291,38 @@ void main() {
 
     init_chunks();
 
+    let layer2 = create_layer();
+    immediate_layer.next_layer = *layer2;
+
     audio_init(*wav_hallo);
     while grax_loop() {
-        audio_loop(*wav_hallo);
+        audio_loop(make_vec(world_camera.pos, world_camera.scale));
 
         static bool draw_list = false;
         if key_pressed(GLFW_KEY_F2) draw_list = !draw_list;
         if draw_list draw_entity_list();
 
-        switch (game_view) {
-            case .World: {
-                update_world();
-                draw_gui();
-                draw_minimap();
-                camera_to_dispatch = world_camera;
-                if key_pressed(GLFW_KEY_TAB) {
-                    camera_to_dispatch = {};
-                    camera_to_dispatch.scale = 200;
-                    game_view = .Ship_Selection;
-                }
-            } break;
+        static Transform2D menu_cam_tr = {scale=200};
 
-            case .Outfitter: {
+        if menu_open {
+            draw_menu();
+            camera_to_dispatch = menu_cam_tr;
+            if key_pressed(GLFW_KEY_TAB) menu_open = false;
+        } else {
 
-            } break;
+            update_world();
 
-            case .Ship_Selection: {
+            immediate_layer.ui_camera = {scale=1};
+            draw_gui();
+            draw_minimap();
+            camera_to_dispatch = world_camera;
 
-
-                let st = ship_selection_menu();
-                if st {
-                    if player_money >= st.build_cost {
-                        player_money -= st.build_cost;
-                        game_view = .World;
-                        player = spawn_ship(vec2_zero, st, team_id_player);
-                    }
-                }
-                draw_menu();
-
-                if key_pressed(GLFW_KEY_TAB) game_view = .World;
-            } break;
-
-            case .Tech_Tree: break;
-
-            case .Map: break;
+            if key_pressed(GLFW_KEY_TAB) {
+                menu_cam_tr.pos = {};
+                menu_open = true;
+            }
         }
+
 
         if key_pressed('Y') {
             save_game();
@@ -371,7 +348,7 @@ SpaceshipType* ship_selection_menu() {
     SpaceshipType* result = null;
 
     if mouse(Right_Mouse) camera_to_dispatch.pos = camera_to_dispatch.pos - Input.mouse_delta * camera_to_dispatch.scale;
-    ui_camera = camera_to_dispatch;
+    immediate_layer.ui_camera = camera_to_dispatch;
     vec2 mouse_world_pos = get_mouse_world_coord(camera_to_dispatch);
 
     float32 horz_pos = -1;
@@ -423,16 +400,56 @@ SpaceshipType* ship_selection_menu() {
 }
 
 void draw_menu() {
+    draw_tabs(immediate_layer.next_layer);
 
-    char*[] tabs = {"esc", "ships", "tech-tree", "map"};
-
-    vec2 pos = app.top_left;
-    anchor = .top_left;
-    for 0 .. tabs.length {
-        pos = pos + draw_text(pos, 0.1, tabs[it], White);
-        pos.x += 0.2;
+    switch (menu_tab) {
+    case .Ships: {
+        let st = ship_selection_menu();
+        if st {
+            if player_money >= st.build_cost {
+                player_money -= st.build_cost;
+                menu_open = false;
+                player = spawn_ship(vec2_zero, st, team_id_player);
+            }
+        }
+    } break;
+    case .Cargo: break;
+    case .Tech: break;
+    case .Map: break;
+    case .Esc: break;
     }
-    anchor = .center;
+}
+
+void draw_tabs(RenderLayer* l) {
+
+    float32 tab_width = 2.0 / tab_names.length;
+    float32 tab_height = 0.1;
+    vec2 size = {tab_width, tab_height};
+
+    vec2 pos = {-1, 1 - tab_height};
+    for 0 .. tab_names.length {
+
+
+        let p = pos + make_vec((it as float32 + 0.5) * tab_width, 0);
+        let s = size * make_vec(0.9, 1);
+        UI_Rect rect = {p,s};
+
+        Color color = White;
+        if point_inside_bb(Input.mouse_pos, bottom_left(rect), top_right(rect)) {
+            color = Gray;
+            if mouse_pressed(Left_Mouse) menu_tab = it;
+        }
+
+        if it == menu_tab {
+            color = Blue;
+        }
+
+        let name = make_string(tab_names[it]);
+
+        draw_rect(l, p, s, color);
+        draw_text(l, center_text(rect, s.y, name), s.y, name, Black);
+        // pos.x += 0.2;
+    }
 }
 
 void draw_minimap() {

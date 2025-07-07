@@ -1,7 +1,7 @@
 
 const ItemKind_Count = 2;
 enum ItemKind {
-    Rock; IronOre;
+    IronOre; GoldOre;
 }
 
 struct Item {
@@ -11,7 +11,7 @@ struct Item {
 
 struct Cargo {
     uint32 amount;
-    Item[ItemKind_Count] items;
+    uint32[ItemKind_Count] item_count;
 }
 
 uint32 cargo_amount(Entity* en) return en.cargo ? en.cargo.amount : 0;
@@ -26,7 +26,7 @@ uint32 add_item(Entity* en, Item item) {
     if cap_left <= 0 return 0;
     uint32 amount = min(cap_left, item.stack_count);
 
-    en.cargo.items[item.kind].stack_count += amount;
+    en.cargo.item_count[item.kind] += amount;
     en.cargo.amount += amount;
     return amount;
 }
@@ -46,10 +46,11 @@ void drop_cargo(Entity* en, float32 cooldown) {
     if en.cargo == null  return;
 
     for 0 .. ItemKind_Count {
-        let item = en.cargo.items[it];
+        let stack_count = en.cargo.item_count[it];
+        ItemKind kind = it as ItemKind;
 
-        for 0 .. item.stack_count {
-            let drop = spawn_item(en.tr.pos, item.kind, 1);
+        for 0 .. stack_count {
+            let drop = spawn_item(en.tr.pos, kind, 1);
             drop.vel = drop.vel + en.vel + random_vec2(50);
             drop.ang_vel = random(global_seed++) * Pi;
             drop.cooldown = cooldown;

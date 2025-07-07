@@ -111,6 +111,7 @@ const linear_drag = 0.99;
 EntityPool entity_pool = init_pool();
 Entity* player;
 uint32 player_money = 0;
+uint32 total_ships_in_play;
 
 const team_id_asteroids = 0;
 const team_id_player = 1;
@@ -292,7 +293,7 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = st.cargo_capacity;
     // TODO: this should work: ({.Rock, 10} as Item)
-    add_item(en, {ItemKind.Rock, (random01() * en.cargo_capacity/2) as uint32} as Item);
+    add_item(en, {ItemKind.GoldOre, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if st == *ship_types[5] {
         let turret = spawn_entity(vec2_zero, sprite_turret);
@@ -496,11 +497,20 @@ void fire_gun(Entity* e) {
     }
 }
 
+void drop_loot(Entity* en, uint32 min_drop, max_drop, ItemKind kind) {
+    let drop_count = random_range(global_seed++, min_drop, max_drop as float32) as uint32;
+    for 0 .. drop_count {
+        let a = spawn_item(en.tr.pos, kind, 1);
+        a.vel = en.vel + random_unit_vec2() * 50;
+        a.ang_vel = random(global_seed++) * Pi;
+    }
+}
+
 void on_destroy(Entity* en) {
 
     if en.cargo  drop_cargo(en, 0);
 
-    switch en.entity_type {
+    switch (en.entity_type) {
         case .ship: {
             spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
 
@@ -531,7 +541,7 @@ void on_destroy(Entity* en) {
 
         case .asteroid: {
 
-            audio_play(*wav_debris_break);
+            audio_play(*wav_debris_break, make_vec(en.tr.pos, en.depth));
 
             if en.level {
                 for 0 .. 2 {
@@ -540,12 +550,8 @@ void on_destroy(Entity* en) {
                     a.ang_vel = random(global_seed++) * Pi;
                 }
             } else {
-                let drop_count = random_range(global_seed++, 0, 7) as uint32;
-                for 0 .. drop_count {
-                    let a = spawn_item(en.tr.pos, ItemKind.Rock, 1);
-                    a.vel = a.vel + en.vel + random_unit_vec2() * 50;
-                    a.ang_vel = random(global_seed++) * Pi;
-                }
+                drop_loot(en, 0, 7, ItemKind.IronOre);
+                drop_loot(en, 0, 3, ItemKind.GoldOre);
 
                 // spawn_explosion((en.collider_radius * 5) as uint32, en.tr.pos, en.vel, 112);
             }
@@ -593,17 +599,16 @@ void update_entity(Entity* en) {
     en.vel = en.vel * linear_drag;
     en.ang_vel *= 0.99;
 
-    if en.entity_type == EntityType.ship {
-        float32 hp_regen_rate = 0.2; // hp/s
-        en.hp = clamp(en.hp + hp_regen_rate*dt, 0, en.max_hp);
-    }
-
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
     switch (en.entity_type) {
 
         case .ship: {
+            total_ships_in_play++;
+
+            float32 hp_regen_rate = 0.2; // hp/s
+            en.hp = clamp(en.hp + hp_regen_rate*dt, 0, en.max_hp);
 
             float32 prcnt = en.hp as float32 / en.max_hp;
             if prcnt < 0.3 {
@@ -909,7 +914,7 @@ void update_world() {
         static vec2 target_cam_pos = {};
         static float32 target_cam_zoom = 160;
 
-        const cam_min_zoom = 160;
+        const cam_min_zoom = 16;
         const cam_max_zoom = 6000;
 
         target_cam_zoom = clamp(target_cam_zoom - target_cam_zoom*0.1*Input.mouse_scroll, cam_min_zoom, cam_max_zoom);
@@ -987,10 +992,16 @@ void update_world() {
 
     sort_entities_into_chunks();
 
+    total_ships_in_play = 0;
     for 0 .. entity_pool.count {
         let e = *entity_pool.data[it];
         if is_dead(e) continue;
         update_entity(e);
+    }
+
+    if total_ships_in_play < 10 {
+        vec2 pos = world_camera.pos + {random(), random()} * sector_size/2;
+        spawn_enemy(pos);
     }
 
     for 0 .. list_length(bullets) {
@@ -1053,7 +1064,7 @@ void draw_background(vec2 cam_pos) {
         vec4[] array = { {1,l,l,1}, {1,1,l,1}, {l,1,l,1}, {l,1,1,1}, {l,l,1,1}, {1,l,1,1} };
         // vec4 color = array[(random01(seed++)*array.length) as int32] * 1.5;
         // vec4 color = array[(get_level(tr.pos) + sq(random01(seed++))*3) as int32 % array.length];
-        vec4 color = array[get_level(tr.pos) % array.length];
+        vec4 color = array[get_level(tr.pos + vec2_one*gnoise(tr.pos/100)*10000) % array.length];
 
         float32 a = s*spacing;
         color.w = 1 - expf((length(tr.pos - cam_pos) - a) / (a/4));
@@ -1063,7 +1074,7 @@ void draw_background(vec2 cam_pos) {
 
     for x : -s .. s+1 for y : -s .. s+1 {
         ivec2 cell = make_ivec(center) + make_ivec(x, y) * spacing;
-        int32 seed = cell.x + cell.y * 100;
+        int32 seed = cell.x + cell.y * 1000;
 
         float32 depth = lerp(random01(seed++), 0.3, 1.0);
         Transform2D tr = {};
@@ -1224,11 +1235,5 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
 
         let en = spawn_asteroid(pos, asteroid_index);
         en.tr.rot = random(seed++) * Pi;
-    }
-
-
-    if do_enemy_spawn and random(global_seed++) < 0 {
-        vec2 pos = chunk_pos + { random(seed++), random(seed++) } * half;
-        spawn_enemy(pos);
     }
 }
