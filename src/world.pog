@@ -110,8 +110,17 @@ const linear_drag = 0.99;
 
 EntityPool entity_pool = init_pool();
 Entity* player;
-uint32 player_money = 0;
 uint32 total_ships_in_play;
+
+
+uint32 player_credits = 0;
+uint32 credits_to_add = 0;
+float32 delay_payment;
+
+void add_credits(uint32 c) {
+    credits_to_add += c;
+    delay_payment = 3.0;
+}
 
 const team_id_asteroids = 0;
 const team_id_player = 1;
@@ -211,6 +220,7 @@ struct Entity {
     Sprite sprite;
     vec4 color_factor;
     vec4 color_additive;
+    vec4 color_outline;
 
     vec2 vel;
     float32 ang_vel;
@@ -650,7 +660,7 @@ void update_entity(Entity* en) {
                         float32 t = (sinf(10.0 * app.total_run_time as float32 + d*Tau) + 1) * 0.5;
                         tr.scale = lerp(d, 0.06, lerp(t, 0.1, 0.15));
                         tr.pos = lerp(d, en.tr.pos, item.tr.pos);
-                        draw_sprite(tr, en.depth, sprite_shockwave, make_vec(1,1,1,t), vec4_zero);
+                        draw_sprite(tr, en.depth, sprite_shockwave, make_vec(1,1,1,t), vec4_zero, vec4_zero);
                     }
 
                     num_beams++;
@@ -670,7 +680,7 @@ void update_entity(Entity* en) {
                 Transform2D tr = en.tr;
                 float32 t = fract(app.total_run_time as float32 + (entity_index(en) as float32) / 10.0);
                 tr.scale = lerp(t, 0, 0.2);
-                draw_sprite(tr, en.depth, sprite_shockwave, make_vec(1,1,1, 1 - t), vec4_zero);
+                draw_sprite(tr, en.depth, sprite_shockwave, make_vec(1,1,1, 1 - t), vec4_zero, vec4_zero);
 
                 let picker = attempt_pickup_item(en);
                 if picker {
@@ -745,7 +755,7 @@ void update_entity(Entity* en) {
             Transform2D tr = en.tr;
             tr.rot = 0;
             tr.scale = (1 / get_collider_radius(sprite_shockwave)) * en.collider_radius * 2;
-            draw_sprite(tr, en.depth, sprite_shockwave, en.color_factor, en.color_additive);
+            draw_sprite(tr, en.depth, sprite_shockwave, en.color_factor, en.color_additive, vec4_zero);
 
 
             let picker = attempt_pickup_item(en);
@@ -798,7 +808,8 @@ void update_entity(Entity* en) {
                 if player and bullet.emitter == player  player.target = en;
 
                 // en.color_additive = {1, 1, 1, 0};
-                en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
+                // en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
+                en.color_outline = color_to_vec4(rgba(0xFF6A00FF));
                 en.hp--;
                 apply_impulse(en, bullet.vel);
 
@@ -830,9 +841,11 @@ void update_entity(Entity* en) {
     }
 
     DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
-    draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive);
+    draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive, en.color_outline);
 
     en.color_additive = exp_decay(en.color_additive, vec4_zero, 10, dt);
+    en.color_outline = exp_decay(en.color_outline, vec4_zero, 1, dt);
+    en.color_outline.w = exp_decay(en.color_outline.w, 0, 100, dt);
 
     if is_dead(en) on_destroy(en);
 }
@@ -1009,7 +1022,7 @@ void update_world() {
         if bullet.emitter and is_dead(bullet.emitter) bullet.emitter = null;
 
         Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 1 };
-        draw_sprite(tr, 0, sprite_projectile, vec4_one, vec4_zero);
+        draw_sprite(tr, 0, sprite_projectile, vec4_one, vec4_zero, vec4_zero);
 
         vec2 pos_start = bullet.pos;
         vec2 pos_end   = bullet.pos + bullet.vel * dt;
@@ -1069,7 +1082,7 @@ void draw_background(vec2 cam_pos) {
         float32 a = s*spacing;
         color.w = 1 - expf((length(tr.pos - cam_pos) - a) / (a/4));
 
-        draw_sprite(tr, depth, sprite_cloud, color, vec4_zero);
+        draw_sprite(tr, depth, sprite_cloud, color, vec4_zero, vec4_zero);
     }
 
     for x : -s .. s+1 for y : -s .. s+1 {
@@ -1083,7 +1096,7 @@ void draw_background(vec2 cam_pos) {
         tr.scale = 1.0;
 
         let sprite = sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32];
-        draw_sprite(tr, depth, sprite, vec4_one, vec4_zero);
+        draw_sprite(tr, depth, sprite, vec4_one, vec4_zero, vec4_zero);
     }
 }
 

@@ -14,6 +14,10 @@ struct Cargo {
     uint32[ItemKind_Count] item_count;
 }
 
+uint32[ItemKind_Count] item_price = {
+    1, 5
+};
+
 uint32 cargo_amount(Entity* en) return en.cargo ? en.cargo.amount : 0;
 
 uint32 add_item(Entity* en, Item item) {
@@ -39,7 +43,10 @@ void pickup(Entity* en, drop) {
     if en == player and amount   this_frame.player_pickup_item = true;
 
     if en.entity_type == EntityType.station
-    and drop.target and drop.target.team_id == team_id_player  player_money += amount;
+    and drop.target and drop.target.team_id == team_id_player {
+        uint32 credits = amount * item_price[drop.item.kind];
+        add_credits(credits);
+    }
 }
 
 void drop_cargo(Entity* en, float32 cooldown) {

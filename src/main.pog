@@ -296,32 +296,24 @@ void main() {
 
     audio_init(*wav_hallo);
     while grax_loop() {
-        audio_loop(make_vec(world_camera.pos, world_camera.scale));
+        audio_loop(make_vec(world_camera.pos, world_camera.scale), 0.6);
 
         static bool draw_list = false;
         if key_pressed(GLFW_KEY_F2) draw_list = !draw_list;
         if draw_list draw_entity_list();
 
-        static Transform2D menu_cam_tr = {scale=200};
-
         if menu_open {
             draw_menu();
-            camera_to_dispatch = menu_cam_tr;
-            if key_pressed(GLFW_KEY_TAB) menu_open = false;
         } else {
-
             update_world();
 
             immediate_layer.ui_camera = {scale=1};
             draw_gui();
             draw_minimap();
             camera_to_dispatch = world_camera;
-
-            if key_pressed(GLFW_KEY_TAB) {
-                menu_cam_tr.pos = {};
-                menu_open = true;
-            }
         }
+
+        if key_pressed(GLFW_KEY_TAB) menu_open = !menu_open;
 
 
         if key_pressed('Y') {
@@ -347,9 +339,12 @@ struct ThisFrameData {
 SpaceshipType* ship_selection_menu() {
     SpaceshipType* result = null;
 
-    if mouse(Right_Mouse) camera_to_dispatch.pos = camera_to_dispatch.pos - Input.mouse_delta * camera_to_dispatch.scale;
-    immediate_layer.ui_camera = camera_to_dispatch;
-    vec2 mouse_world_pos = get_mouse_world_coord(camera_to_dispatch);
+    static Transform2D menu_cam_tr = {scale=200};
+    if mouse(Right_Mouse) menu_cam_tr.pos = menu_cam_tr.pos - Input.mouse_delta * menu_cam_tr.scale;
+    immediate_layer.ui_camera = menu_cam_tr;
+    camera_to_dispatch = menu_cam_tr;
+
+    vec2 mouse_world_pos = get_mouse_world_coord(menu_cam_tr);
 
     float32 horz_pos = -1;
     for 0 .. ship_types.length {
@@ -366,6 +361,8 @@ SpaceshipType* ship_selection_menu() {
 
         float32 glyph_height = 10;
         vec4 color = vec4_one;
+        vec4 outline = vec4_zero;
+
 
         if is_unlocked(st) {
             vec2 size = { stride, height };
@@ -373,6 +370,7 @@ SpaceshipType* ship_selection_menu() {
             vec2 bb_max = tr.pos + size/2;
 
             if point_inside_bb(mouse_world_pos, bb_min, bb_max) {
+                outline = {1,1,1,1};
                 tr.scale = 1.1;
                 if mouse_down(Left_Mouse) {
                     result = st;
@@ -391,7 +389,7 @@ SpaceshipType* ship_selection_menu() {
             color = {0,0,0, 1};
         }
 
-        draw_sprite(tr, 0, st.sprite, color, vec4_zero);
+        draw_sprite(tr, 0, st.sprite, color, vec4_zero, outline);
 
         draw_text(tr.pos + make_vec(-stride/2, -height/2), glyph_height, st.name, White);
     }
@@ -406,8 +404,8 @@ void draw_menu() {
     case .Ships: {
         let st = ship_selection_menu();
         if st {
-            if player_money >= st.build_cost {
-                player_money -= st.build_cost;
+            if player_credits >= st.build_cost {
+                player_credits -= st.build_cost;
                 menu_open = false;
                 player = spawn_ship(vec2_zero, st, team_id_player);
             }
@@ -562,6 +560,36 @@ void draw_bar(Gui_Bar* bar, vec2 pos, float32 width, value, max_value) {
     bar.height = exp_decay(bar.height, bar.target_height, rate, dt);
 }
 
+void draw_credits(vec2 pos, float32 height) {
+    float32 dt = deltatime();
+
+    static float32 credits_display_interp = 1.0;
+
+    if delay_payment <= 0.0 {
+        if credits_to_add {
+            player_credits++;
+            credits_to_add--;
+            credits_display_interp = 0;
+        }
+    } else {
+        delay_payment -= dt;
+    }
+
+    Color regular_color = Cyan;
+
+    Color c = lerp(credits_display_interp, White, regular_color);
+    float32 h = lerp(credits_display_interp, height*1.4, height);
+    credits_display_interp = exp_decay(credits_display_interp, 1, 6, dt);
+
+    pos = draw_text(pos, h, to_string(player_credits), c);
+    if credits_to_add {
+        pos = draw_text(pos, height, concat(" +", to_string(credits_to_add)), regular_color);
+    }
+    anchor = .top_left;
+    draw_text(pos, height*0.5, "credits", regular_color);
+    anchor = .center;
+}
+
 void draw_gui() {
     float32 height = 0.07;
 
@@ -569,6 +597,8 @@ void draw_gui() {
     if this_frame.player_took_damage  make_bar_jump(*bar_player_health);
     if this_frame.target_took_damage  make_bar_jump(*bar_target_health);
 
+    float32 h = height*1.5;
+    draw_credits(app.top_left + make_vec(h, -h), h);
 
     if player {
         vec2 pos = app.bottom_left + make_vec(height, height);
@@ -577,14 +607,13 @@ void draw_gui() {
         uint32 cargo_amt = cargo_amount(player);
         uint32 cargo_max = player.cargo_capacity;
 
-        anchor = .bottom_left;
-        vec2 txt_pos = draw_text(pos + make_vec(width + height/2, 0), height, to_string(player_money), Cyan);
         if cargo_amt == cargo_max {
             float32 a = lerp((sinf(Tau * app.total_run_time as float32) + 1.0)*0.5, 0.1, 1);
             Color flash_color = opacity(rgba(bar_player_capacity.target_color), a);
-            draw_text(txt_pos + make_vec(height, 0), height, "Drop Cargo: 'Q'", flash_color);
+            anchor = .bottom_left;
+            draw_text(pos + make_vec(width + height, 0), height, "Drop Cargo: 'Q'", flash_color);
+            anchor = .center;
         }
-        anchor = .center;
 
         draw_bar(*bar_player_capacity, pos, width, cargo_amt as float32, cargo_max as float32);
         pos.y += height * 1.5;
@@ -767,7 +796,7 @@ void field_float(float32* value, vec2 pos, float32 height) {
 
 
 struct Game_Save {
-    uint32 player_money;
+    uint32 player_credits;
     vec2   player_pos;
     uint32 player_ship_type;
 
@@ -779,7 +808,7 @@ struct Game_Save {
 
 void save_game() {
     Game_Save save = {};
-    save.player_money = player_money;
+    save.player_credits = player_credits;
     if player {
         save.player_pos = player.tr.pos;
         save.player_ship_type = 1 + (player.ship_type as uint64 - ship_types.data as uint64) / sizeof SpaceshipType;
@@ -799,7 +828,7 @@ void load_game() {
     let buffer = read_binary_file("save.bin");
     Game_Save* save = buffer.data;
 
-    player_money = save.player_money;
+    player_credits = save.player_credits;
 
     world_camera.pos = save.player_pos;
     if save.player_ship_type {
