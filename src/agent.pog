@@ -60,24 +60,29 @@ void agent_goto(Entity* en, vec2 pos) {
 }
 
 void agent_attack(Entity* en, target) {
-    let dist = circle_dist(en, target);
+    let d = circle_dist(en, target);
 
-    float32 seconds = dist / bullet_muzzle_speed;
+    float32 seconds = d / bullet_muzzle_speed;
     let target_pos = target.tr.pos + target.vel * seconds;
+
+    Transform2D tr = {};
+    tr.pos = target_pos;
+    tr.scale = 100.0 / get_collider_radius(sprite_shockwave);
+    draw_sprite(tr, 0, sprite_shockwave, vec4_one, vec4_zero, vec4_zero);
 
     turn_to(en, target_pos);
     // look_at(*en.tr, target_pos);
 
-    if dist < 15*16  fire_gun(en);
+    if d < 15*16  fire_gun(en);
 
     float32 min_dist = 80;
     float32 max_dist = 200;
 
     vec2 thrust_dir = {};
 
-    if dist < min_dist {
+    if d < min_dist {
         thrust_dir.y = -1;
-    } else if dist > max_dist {
+    } else if d > max_dist {
         thrust_dir.y = 1;
     } else {
         let denom = abs(target.vel.x);

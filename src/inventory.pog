@@ -42,6 +42,8 @@ void pickup(Entity* en, drop) {
 
     if en == player and amount   this_frame.player_pickup_item = true;
 
+    if amount audio_play(*wav_hallo, make_vec(drop.tr.pos, -drop.depth));
+
     if en.entity_type == EntityType.station
     and drop.target and drop.target.team_id == team_id_player {
         uint32 credits = amount * item_price[drop.item.kind];
@@ -51,6 +53,8 @@ void pickup(Entity* en, drop) {
 
 void drop_cargo(Entity* en, float32 cooldown) {
     if en.cargo == null  return;
+
+    uint32 amount_dropped = 0;
 
     for 0 .. ItemKind_Count {
         let stack_count = en.cargo.item_count[it];
@@ -63,7 +67,11 @@ void drop_cargo(Entity* en, float32 cooldown) {
             drop.cooldown = cooldown;
             drop.target = en;
         }
+
+        amount_dropped += stack_count;
     }
+
+    if amount_dropped audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
 
     free(en.cargo);
     en.cargo = null;

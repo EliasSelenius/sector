@@ -41,6 +41,7 @@ include "src/agent.pog";
         weapon
         tracktor beam
         projectile deflection chance
+        ramming upgrade: smaller asteroids break when you hit
 
     tracktor beam upgrades:
         - radius
@@ -192,12 +193,11 @@ void loadassets() {
     sprite_cloud.is_semi_transparent = true;
 }
 
-enum Menu_Tabs { Ships; Cargo; Tech; Map; Esc; }
+enum Menu_Tabs { Ships; Cargo; Tech; Map; Esc; Count; }
 char*[] tab_names = {"ships", "cargo", "tech", "map", "esc"};
 bool menu_open = false;
-
-
 Menu_Tabs menu_tab = .Ships;
+
 Transform2D camera_to_dispatch;
 
 void on_event(AppEvent event, AppEventData data) switch event {
@@ -407,7 +407,8 @@ void draw_menu() {
             if player_credits >= st.build_cost {
                 player_credits -= st.build_cost;
                 menu_open = false;
-                player = spawn_ship(vec2_zero, st, team_id_player);
+                if player despawn(player);
+                player = spawn_ship(world_camera.pos + random_vec2(chunk_size*0.5), st, team_id_player);
             }
         }
     } break;
@@ -419,6 +420,9 @@ void draw_menu() {
 }
 
 void draw_tabs(RenderLayer* l) {
+
+    if key_pressed('A') menu_tab = (menu_tab-1) % Menu_Tabs.Count;
+    if key_pressed('D') menu_tab = (menu_tab+1) % Menu_Tabs.Count;
 
     float32 tab_width = 2.0 / tab_names.length;
     float32 tab_height = 0.1;

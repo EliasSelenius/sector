@@ -229,6 +229,7 @@ struct Entity {
 
     uint32 level;
     float32 hp, max_hp;
+    float32 shield_hp, max_shield_hp;
     uint32 team_id;
     float32 cooldown;
 
@@ -296,6 +297,8 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     en.max_hp = st.hp;
     en.hp = en.max_hp;
+    en.max_shield_hp = 5;
+    en.shield_hp = en.max_shield_hp;
     en.team_id = team_id;
 
     en.max_tractor_beams = 3;
@@ -456,45 +459,63 @@ void thrust(Entity* e, vec2 dir) {
     }
 }
 
-void turn_to(Entity* e, vec2 target) {
-    let diff = sub(target, e.tr.pos);
-    diff = rotate_vec(diff, -e.tr.rot);
+void turn_to(Entity* en, vec2 target) {
+    let diff = target - en.tr.pos;
+    diff = rotate_vec(diff, -en.tr.rot);
     float32 angle = vec2_to_angle(diff);
 
 
-    e.ang_vel = angle * 3;
+    let desired = 10*angle - 4*en.ang_vel;
+    ang_accelerate(en, desired);
 
-    // let seconds = angle / e.ang_vel;
+    // float32 A = 30;
+    // if abs(desired) < 0.1;
+    // else if desired < 0  ang_accelerate(en, -A);
+    // else                 ang_accelerate(en, A);
 
-    // // if angle == 0 then ang_vel = 0;
 
-    // // rot + ang_vel * seconds = rot + angle
+    // if !almost_equals(desired, 0.0, 0.1) {
+    //     vec2 ss = make_vec(get_sprite_pixel_size(en.sprite)) * 0.5;
+    //     vec2 upper_right = local2world(en.tr, ss);
 
-    // ang_accelerate(e, )
+    //     let dt = deltatime();
+    //     vec2    p_vel = en.vel - right(en.tr) * 2000 * dt + random_vec2(2);
+    //     float32 size = random_range(0.1, 0.3);
+    //     float32 rot = random(global_seed++) * Pi;
+    //     float32 ang_vel = 1;
+    //     float32 life_time = random_range(0.1, 0.4);
+    //     uint32  flags = ParticleFlag_SubEmitter;
+
+    //     let p = make_particle(upper_right, p_vel, size, rot, ang_vel, life_time, color_fire, flags);
+    //     p.color_end = color_smoke;
+    //     p.color_end.w = 0;
+    //     spawn_particle(p);
+    // }
 }
 
 const bullet_muzzle_speed = 800;
 const bullet_random_muzzle_speed = 48;
-void fire_gun(Entity* e) {
+void fire_gun(Entity* en) {
 
-    if e.cooldown <= 0 {
-        let dir = up(e.tr);
+    if en.cooldown <= 0 {
+        let dir = up(en.tr);
         dir.x *= -1;
 
         Bullet bullet = {};
-        bullet.emitter = e;
-        bullet.pos = e.tr.pos + dir * e.collider_radius;
-        bullet.vel = e.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
-        bullet.team_id = e.team_id;
+        bullet.emitter = en;
+        bullet.pos = en.tr.pos + dir * en.collider_radius;
+        bullet.vel = en.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
+        bullet.team_id = en.team_id;
         list_add(*bullets, *bullet);
+        audio_play(*wav_hallo, make_vec(bullet.pos, 0));
 
-        e.cooldown = 0.25;
-        // e.cooldown = 0.1;
+        en.cooldown = 0.25;
+        // en.cooldown = 0.1;
 
         uint32 num_p = 10;
         for 0 .. num_p {
 
-            vec2    p_vel = e.vel + (dir*40 + random_vec2(20)) * random01();
+            vec2    p_vel = en.vel + (dir*40 + random_vec2(20)) * random01();
             float32 size = 0.5;
             float32 rot = random(global_seed++) * Pi;
             float32 ang_vel = 1;
@@ -551,7 +572,7 @@ void on_destroy(Entity* en) {
 
         case .asteroid: {
 
-            audio_play(*wav_debris_break, make_vec(en.tr.pos, en.depth));
+            audio_play(*wav_debris_break, make_vec(en.tr.pos, -en.depth));
 
             if en.level {
                 for 0 .. 2 {
@@ -612,6 +633,16 @@ void update_entity(Entity* en) {
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
+    // draw shield
+    if en.shield_hp > 0.0 {
+        vec4 color = make_vec(0, 0.3, 1, 0.5);
+        let sprite = sprite_shockwave;
+        Transform2D tr = {};
+        tr.pos = en.tr.pos;
+        tr.scale = (1 / get_collider_radius(sprite)) * en.collider_radius * 2;
+        draw_sprite(tr, en.depth, sprite, color, vec4_zero, vec4_zero);
+    }
+
     switch (en.entity_type) {
 
         case .ship: {
@@ -667,11 +698,6 @@ void update_entity(Entity* en) {
                     if num_beams < en.max_tractor_beams;
                     else break;
                 }
-            }
-
-            // shield
-            {
-
             }
         } break;
 
@@ -777,6 +803,7 @@ void update_entity(Entity* en) {
 
                 spawn_particle(p);
 
+                audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
 
                 // let tmp = p.size_end;
                 // p.size_end = p.size_start;
@@ -796,7 +823,7 @@ void update_entity(Entity* en) {
     or en.entity_type == EntityType.blueprint;
     else {
         for 0 .. list_length(bullets) {
-            let bullet = bullets[it];
+            let bullet = *bullets[it];
             if bullet.team_id == en.team_id continue;
 
             float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
@@ -810,7 +837,6 @@ void update_entity(Entity* en) {
                 // en.color_additive = {1, 1, 1, 0};
                 // en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
                 en.color_outline = color_to_vec4(rgba(0xFF6A00FF));
-                en.hp--;
                 apply_impulse(en, bullet.vel);
 
                 vec2 ref = reflect(bullet.vel, noz(bullet.pos - en.tr.pos));
@@ -828,14 +854,25 @@ void update_entity(Entity* en) {
                     spawn_particle(p);
                 }
 
-                list_unordered_remove(bullets, it-- as uint32);
+                float32 damage = 1.0;
 
-                if player {
-                    if en == player         this_frame.player_took_damage = true;
-                    if en == player.target  this_frame.target_took_damage = true;
+                if en.shield_hp > 0.0 {
+                    bullet.vel = ref;
+                    en.shield_hp -= damage;
+                    audio_play(*wav_hallo, make_vec(bullet.pos, 0));
+                } else {
+                    en.hp -= damage;
+                    list_unordered_remove(bullets, it-- as uint32);
+
+                    audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
+
+                    if player {
+                        if en == player         this_frame.player_took_damage = true;
+                        if en == player.target  this_frame.target_took_damage = true;
+                    }
+
+                    if is_dead(en) break;
                 }
-
-                if is_dead(en) break;
             }
         }
     }
