@@ -14,6 +14,7 @@ include "src/agent.pog";
 
 /*
     Civilization is flourishing in an asteroid field of abundant riches, and yet conflict is prevalent
+    goal of game is to establish dominance, competing with several other factions who also want sole control of the mineral rich asteroidbelt
 */
 
 /* TODOs:
@@ -23,11 +24,7 @@ include "src/agent.pog";
     - electric particle effect on damaged ships
     - overlay fire cracks on sprites for damaged ships
 
-    - semi-transparent ice asteroids
 
-    - sector level
-    - sector map
-    - sector unique background color
     - higher value ore drop in higher level sectors
 
     - ships drop data
@@ -50,6 +47,11 @@ include "src/agent.pog";
     - ship-outfitter: select a ship and components, build with money
 
     - explosive charges
+
+    - biome: icy
+    - biome: crystal
+    - biome: dusty
+    - biome: acidic
 
 Priority:
 
@@ -95,8 +97,8 @@ DrawBuffers[debris_count] db_debris;
 Spritesheet spritesheet;
 Spritesheet spritesheet_items;
 
-const sprites_asteroids_count = 3;
-Sprite[3] sprites_asteroids;
+const sprites_asteroids_count = 4;
+Sprite[sprites_asteroids_count] sprites_asteroids;
 
 Sprite[2] sprites_items;
 
@@ -180,12 +182,14 @@ void loadassets() {
         sprites_asteroids[it] = get_sprite(*spritesheet, it);
     }
 
+    sprites_asteroids[3].is_semi_transparent = true;
+
     for 0 .. ItemKind_Count {
         sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
     sprite_turret = get_sprite(*spritesheet, 9);
-    sprite_spacestation = get_sprite(*spritesheet, 15);
+    sprite_spacestation = get_sprite(*spritesheet, 16);
 
     sprite_projectile.is_semi_transparent = true;
     sprite_shockwave.is_semi_transparent = true;
@@ -199,6 +203,7 @@ bool menu_open = false;
 Menu_Tabs menu_tab = .Ships;
 
 Transform2D camera_to_dispatch;
+RenderLayer world_ui_layer;
 
 void on_event(AppEvent event, AppEventData data) switch event {
 
@@ -291,12 +296,20 @@ void main() {
 
     init_chunks();
 
+    world_ui_layer = create_layer();
     let layer2 = create_layer();
     immediate_layer.next_layer = *layer2;
 
+
+    {
+        print("sizeof Entity = ", sizeof Entity, " bytes.\n");
+    }
+
+    gen_world(0);
+
     audio_init(*wav_hallo);
     while grax_loop() {
-        audio_loop(make_vec(world_camera.pos, world_camera.scale), 0.6);
+        audio_loop(make_vec(world_camera.pos, world_camera.scale), 0.2);
 
         static bool draw_list = false;
         if key_pressed(GLFW_KEY_F2) draw_list = !draw_list;
@@ -309,7 +322,8 @@ void main() {
 
             immediate_layer.ui_camera = {scale=1};
             draw_gui();
-            draw_minimap();
+            vec2 center = {1.2, 0.7};
+            draw_minimap(center);
             camera_to_dispatch = world_camera;
         }
 
@@ -322,10 +336,15 @@ void main() {
             load_game();
         }
 
+
         dispatch_sprites(camera_to_dispatch);
         this_frame = {};
 
         if key_pressed(GLFW_KEY_ESCAPE) break;
+
+
+        world_ui_layer.ui_camera = camera_to_dispatch;
+        dispatch_layer(*world_ui_layer);
     }
 }
 
@@ -336,11 +355,16 @@ struct ThisFrameData {
     bool target_took_damage;
 }
 
+void mouse_drag_control(Transform2D* tr) {
+    if mouse(Right_Mouse) tr.pos = tr.pos - Input.mouse_delta * tr.scale;
+    tr.scale -= tr.scale * Input.mouse_scroll * 0.1;
+}
+
 SpaceshipType* ship_selection_menu() {
     SpaceshipType* result = null;
 
     static Transform2D menu_cam_tr = {scale=200};
-    if mouse(Right_Mouse) menu_cam_tr.pos = menu_cam_tr.pos - Input.mouse_delta * menu_cam_tr.scale;
+    mouse_drag_control(*menu_cam_tr);
     immediate_layer.ui_camera = menu_cam_tr;
     camera_to_dispatch = menu_cam_tr;
 
@@ -414,7 +438,58 @@ void draw_menu() {
     } break;
     case .Cargo: break;
     case .Tech: break;
-    case .Map: break;
+    case .Map: {
+
+        static Transform2D map_cam = {scale = 6000};
+        mouse_drag_control(*map_cam);
+        immediate_layer.ui_camera = map_cam;
+        camera_to_dispatch = map_cam;
+
+        // draw_minimap(vec2_zero);
+
+        for y: 0 .. sector_count_sqrt for x: 0 .. sector_count_sqrt {
+
+            let sector = index_sectors(x, y);
+            // let north = index_sectors(x, y+1);
+            // if north and north.faction_team_id != sector.faction_team_id {
+
+            // }
+
+
+            float32 opa = 0.1;
+            Color bg_color = opacity(sector.discovered ? White : Gray, opa);
+            Color tx_color = opacity(Black, opa);
+
+            ivec2 spos = {x, y} - make_ivec2(sector_count_sqrt/2);
+            vec2 pos = make_vec(spos) * sector_size;
+            vec2 size = {sector_size, sector_size};
+            UI_Rect rect = {pos, size};
+            float32 pixel_size = 2.0 / app.window_height * map_cam.scale;
+            rect.size = rect.size - vec2_one*pixel_size;
+            draw_rect(rect, bg_color);
+
+            let level = get_level(pos);
+            let str = to_string(level);
+            float32 glyph_height = rect.size.y * 0.4;
+            draw_text(center_text(rect, glyph_height, str), glyph_height, str, tx_color);
+
+            draw_rect(sector.biome_center, vec2_one*pixel_size*2, Green);
+        }
+
+        for 0 .. entity_pool.count {
+            let en = *entity_pool.data[it];
+            if is_dead(en) continue;
+
+            vec4 color_fac = vec4_one;
+            if en.entity_type == EntityType.ship {
+                if en.team_id == team_id_player   color_fac = {0,0,1,1};
+                else                              color_fac = {1,0,0,1};
+            }
+
+            DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
+            draw_sprite(db, en.tr, en.depth, en.sprite, color_fac, en.color_additive, en.color_outline);
+        }
+    } break;
     case .Esc: break;
     }
 }
@@ -437,7 +512,7 @@ void draw_tabs(RenderLayer* l) {
         UI_Rect rect = {p,s};
 
         Color color = White;
-        if point_inside_bb(Input.mouse_pos, bottom_left(rect), top_right(rect)) {
+        if hover(rect, Input.mouse_pos) {
             color = Gray;
             if mouse_pressed(Left_Mouse) menu_tab = it;
         }
@@ -454,11 +529,10 @@ void draw_tabs(RenderLayer* l) {
     }
 }
 
-void draw_minimap() {
+void draw_minimap(vec2 center) {
 
     float32 scale = 0.12;
     let center_sector = get_sector_coord(world_camera.pos);
-    vec2 center = {1.2, 0.7};
     for y: -1 .. 2 {
         for x: -1 .. 2 {
             let pos = world_camera.pos / sector_size;
@@ -477,8 +551,7 @@ void draw_minimap() {
 
     vec2 world2minimap(vec2 wpos) {
         float32 scale = 0.12;
-        vec2 center = {1.2, 0.7};
-        return center + (wpos - world_camera.pos) / sector_size * scale;
+        return (wpos - world_camera.pos) / sector_size * scale;
     }
 
     for 0 .. entity_pool.count {
@@ -492,7 +565,7 @@ void draw_minimap() {
             default: continue;
         }
 
-        draw_rect(world2minimap(en.tr.pos), make_vec2(0.07*scale), color);
+        draw_rect(center + world2minimap(en.tr.pos), make_vec2(0.07*scale), color);
     }
 
     draw_rect(center, make_vec2(0.1*scale), Green);

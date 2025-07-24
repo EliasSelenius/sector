@@ -92,7 +92,8 @@ void spawn_disipating_dust_particle(vec2 pos, float32 size, max_vel_magnitude, v
     p.size_end = size;
     p.size_start = p.size_end * 0.1;
 
-    p.tex = particle;
+    // p.tex = particle;
+    p.tex = sprite_cloud.tex;
     p.lifetime = 0.2 + random01() * 2;
     list_add(*particles, *p);
 }
