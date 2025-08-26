@@ -227,6 +227,7 @@ struct Entity {
     vec2 vel;
     float32 ang_vel;
     float32 mass;
+    float32 drag_coff;
     float32 collider_radius;
 
     uint32 level;
@@ -287,6 +288,7 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
     en.max_hp = max((size.x + size.y) / 20, 1);
     en.hp = en.max_hp;
     en.mass = size.x * size.y;
+    en.drag_coff = 1;
     return en;
 }
 
@@ -419,6 +421,7 @@ Entity* spawn_worm(vec2 pos) {
         let seg = spawn_entity(pos, ship_types[0].sprite);
         seg.entity_type = .worm_segment;
         seg.target = last_seg;
+        seg.tr.scale = last_seg.tr.scale * 0.95;
         last_seg = seg;
     }
 
@@ -645,7 +648,12 @@ void update_entity(Entity* en) {
     let dt = deltatime();
     en.tr.pos = en.tr.pos + en.vel * dt;
     en.tr.rot += en.ang_vel * dt;
-    en.vel = en.vel * linear_drag;
+
+    // en.vel = en.vel * linear_drag;
+    float32 fluid_density = 10;
+    let F_drag = 0.5 * fluid_density * en.drag_coff * sqlength(en.vel);
+    apply_impulse(en, neg(noz(en.vel)) * F_drag * dt);
+
     en.ang_vel *= 0.99;
 
     if en.cooldown > 0  en.cooldown -= dt;
@@ -658,7 +666,7 @@ void update_entity(Entity* en) {
         Transform2D tr = {};
         tr.pos = en.tr.pos;
         tr.scale = (1 / get_collider_radius(sprite)) * en.collider_radius * 2;
-        draw_sprite(tr, en.depth, sprite, color, vec4_zero, vec4_zero);
+        // draw_sprite(tr, en.depth, sprite, color, vec4_zero, vec4_zero);
     }
 
     switch (en.entity_type) {
@@ -835,27 +843,41 @@ void update_entity(Entity* en) {
 
         case .worm_segment: {
             if en.target {
-                let len = en.collider_radius + en.target.collider_radius;
+                let len = en.collider_radius*en.tr.scale + en.target.collider_radius*en.target.tr.scale;
                 let diff = en.tr.pos - en.target.tr.pos;
                 let back = forward_vec(en.target.tr)*-1;
                 let a = sign_angle(back, diff);
 
                 if !is_nan(a) {
-                    float32 ma = Half_Pi * 0.7;
+                    float32 ma = Half_Pi * 1; // TODO: angle limit could be different for each joint
                     a = clamp(a, -ma, ma);
 
-                    en.tr.pos = en.target.tr.pos + rotate_vec(make_vec(0, -1), en.target.tr.rot - a) * len;
-
-                    draw_text(*world_ui_layer, lerp(0.5, en.tr.pos, en.target.tr.pos), 4, to_string(a), White);
+                    let target_pos = en.target.tr.pos + rotate_vec(make_vec(0, -1), en.target.tr.rot - a) * len;
+                    en.tr.pos = target_pos;
 
                     look_at(*en.tr, en.target.tr.pos);
                 }
 
-                // if dist(en.tr.pos, en.target.tr.pos) > len {
-                //     en.tr.pos = en.target.tr.pos - noz(en.target.tr.pos - en.tr.pos) * len;
+
+                // let contact_point = lerp(0.5, en.tr.pos, en.target.tr.pos);
+
+                // let rel_vel = en.target.vel - en.vel;
+                // let imp = rel_vel*en.target.mass;
+
+                // let ang = cross(make_vec(contact_point - en.tr.pos, 0), make_vec(imp, 0)).z;
+                // apply_impulse(en, imp);
+                // ang_accelerate(en, ang);
+
+                // let imp = noz(target_pos - en.tr.pos);
+                // imp = imp * (length(target_pos - en.tr.pos)*50 - length(en.vel)*100);
+                // apply_impulse(en, imp);
+
+                // if dist(en.tr.pos, target_pos) > len*1.5 {
                 // }
+
+
             } else {
-                update_ai(en);
+                update_worm_ai(en);
             }
         } break;
 
@@ -869,53 +891,9 @@ void update_entity(Entity* en) {
             let bullet = *bullets[it];
             if bullet.team_id == en.team_id continue;
 
-            float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
-            if intersection < 0 {
-                if en.target == null
-                or en.target.entity_type == EntityType.asteroid
-                    en.target = bullet.emitter;
-
-                if player and bullet.emitter == player  player.target = en;
-
-                // en.color_additive = {1, 1, 1, 0};
-                // en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
-                en.color_outline = color_to_vec4(rgba(0xFF6A00FF));
-                apply_impulse(en, bullet.vel);
-
-                vec2 ref = reflect(bullet.vel, noz(bullet.pos - en.tr.pos));
-
-                for 0 .. 10 {
-                    vec2    pos = bullet.pos;
-                    vec2    vel = noz(ref)*50*random01() + random_vec2(15);
-                    float32 size = 0.4;
-                    float32 rot = random(global_seed++) * Pi;
-                    float32 ang_vel = 1;
-                    float32 life_time = 1;
-                    vec4    color = color_to_vec4(rgba(0xFF6A00FF));
-
-                    Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
-                    spawn_particle(p);
-                }
-
-                float32 damage = 1.0;
-
-                if en.shield_hp > 0.0 {
-                    bullet.vel = ref;
-                    en.shield_hp -= damage;
-                    audio_play(*wav_hallo, make_vec(bullet.pos, 0));
-                } else {
-                    en.hp -= damage;
-                    list_unordered_remove(bullets, it-- as uint32);
-
-                    audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
-
-                    if player {
-                        if en == player         this_frame.player_took_damage = true;
-                        if en == player.target  this_frame.target_took_damage = true;
-                    }
-
-                    if is_dead(en) break;
-                }
+            if default_col_response(en, bullet) {
+                list_unordered_remove(bullets, it-- as uint32);
+                if is_dead(en) break;
             }
         }
     }
@@ -930,8 +908,60 @@ void update_entity(Entity* en) {
     if is_dead(en) on_destroy(en);
 }
 
-float32 circle_dist(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius, e1.tr.pos, e1.collider_radius);
-float32 circle_dist(Entity* e0, vec2 p1, float32 r1) return circle_dist(e0.tr.pos, e0.collider_radius, p1, r1);
+bool default_col_response(Entity* en, Bullet* bullet) {
+    float32 intersection = circle_dist(en.tr.pos, en.collider_radius, bullet.pos, 0.3);
+    if intersection >= 0 return false;
+
+    if en.target == null
+    or en.target.entity_type == EntityType.asteroid
+        en.target = bullet.emitter;
+
+    if player and bullet.emitter == player  player.target = en;
+
+    // en.color_additive = {1, 1, 1, 0};
+    en.color_additive = color_to_vec4(rgba(0xFF6A00FF));
+    en.color_outline = color_to_vec4(rgba(0xFF6A00FF));
+    apply_impulse(en, bullet.vel);
+
+    vec2 ref = reflect(bullet.vel, noz(bullet.pos - en.tr.pos));
+
+    for 0 .. 10 {
+        vec2    pos = bullet.pos;
+        vec2    vel = noz(ref)*50*random01() + random_vec2(15);
+        float32 size = 0.4;
+        float32 rot = random(global_seed++) * Pi;
+        float32 ang_vel = 1;
+        float32 life_time = 1;
+        vec4    color = color_to_vec4(rgba(0xFF6A00FF));
+
+        Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
+        spawn_particle(p);
+    }
+
+    float32 damage = 1.0;
+
+    if en.shield_hp > 0.0 {
+        bullet.vel = ref;
+        en.shield_hp -= damage;
+        audio_play(*wav_hallo, make_vec(bullet.pos, 0));
+    } else {
+        en.hp -= damage;
+
+        audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
+
+        if player {
+            if en == player         this_frame.player_took_damage = true;
+            if en == player.target  this_frame.target_took_damage = true;
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+float32 circle_dist(Entity* e0, e1) return circle_dist(e0.tr.pos, e0.collider_radius * e0.tr.scale, e1.tr.pos, e1.collider_radius * e1.tr.scale);
+float32 circle_dist(Entity* e0, vec2 p1, float32 r1) return circle_dist(e0.tr.pos, e0.collider_radius * e0.tr.scale, p1, r1);
 
 float32 entity_intersects(Entity* e0, e1) return circle_dist(e0, e1) < 0;
 

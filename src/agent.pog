@@ -65,10 +65,10 @@ void agent_attack(Entity* en, target) {
     float32 seconds = d / bullet_muzzle_speed;
     let target_pos = target.tr.pos + target.vel * seconds;
 
-    Transform2D tr = {};
-    tr.pos = target_pos;
-    tr.scale = 100.0 / get_collider_radius(sprite_shockwave);
-    draw_sprite(tr, 0, sprite_shockwave, vec4_one, vec4_zero, vec4_zero);
+    // Transform2D tr = {};
+    // tr.pos = target_pos;
+    // tr.scale = 100.0 / get_collider_radius(sprite_shockwave);
+    // draw_sprite(tr, 0, sprite_shockwave, vec4_one, vec4_zero, vec4_zero);
 
     turn_to(en, target_pos);
     // look_at(*en.tr, target_pos);
@@ -90,4 +90,24 @@ void agent_attack(Entity* en, target) {
     }
 
     thrust(en, thrust_dir);
+}
+
+void update_worm_ai(Entity* worm) {
+    float32 awareness_radius = 500;
+    let ents = all_entities_in_radius(worm, awareness_radius);
+
+    Entity* target = null;
+
+    for 0 .. ents.length {
+        let en = ents[it];
+        if en.entity_type == EntityType.ship {
+            target = en;
+            break;
+        }
+    }
+
+    if target {
+        turn_to(worm, target.tr.pos);
+        accelerate(worm, forward_vec(worm.tr) * 100);
+    }
 }

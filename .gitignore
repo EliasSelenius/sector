@@ -13,6 +13,8 @@ game
 output.g.c
 output.raddbg
 output.exp
+output.rdi
+
 
 *.exe
 *.dll
