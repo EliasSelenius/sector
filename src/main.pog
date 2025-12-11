@@ -214,18 +214,6 @@ void on_event(AppEvent event, AppEventData data) switch event {
 
 void main() {
 
-    {
-        let strus = structs as Struct[];
-        for 0 .. strus.length {
-            Struct* s = *strus[it];
-            print("struct ", s.name, "\n");
-            for 0 .. s.fields.length {
-                let field = *s.fields[it];
-                print("    ", field.name, "\n");
-            }
-        }
-    }
-
     // { // test
     //     void test(uint32 i) {
     //         let f = @(*i as float32*);
@@ -302,10 +290,6 @@ void main() {
         update_buffers(*db_debris[it], verts, inds);
     }
 
-    for 0 .. debris_count {
-        bind_instance_buffer_to_vao(db_debris[it].vao, draw2d_renderer.vbo_instances);
-    }
-
 
     set_clear_color(rgba(0x0a0a0aff));
 
@@ -349,7 +333,12 @@ void main() {
             load_game();
         }
 
+        if key_pressed('R') {
+            default2d_shader = load_shader(default2d_shader.name.chars);
+        }
 
+        glDepthMask(true);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         dispatch_sprites(camera_to_dispatch);
         dispatch_layer(*world_ui_layer, camera_to_dispatch);
         dispatch_layer(*ui_layer, {scale=1} as Transform2D);

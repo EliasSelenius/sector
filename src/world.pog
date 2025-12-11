@@ -1155,12 +1155,13 @@ void update_world() {
 
             vec2    pos = lerp(t, pos_start, pos_end);
             vec2    vel = random_vec2(10);
-            float32 size = 0.7;
+            float32 size = 3;
             float32 rot = random(global_seed++) * Pi;
             float32 ang_vel = 1;
             float32 life_time = 0.15 + dt*t;
 
             Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
+            p.tex = white_texture;
             spawn_particle(p);
         }
 
@@ -1220,7 +1221,8 @@ void draw_background(vec2 cam_pos) {
         tr.scale = 1.0;
 
         let sprite = sprites_asteroids[(random01(seed++) * sprites_asteroids_count) as uint32];
-        draw_sprite(tr, depth, sprite, vec4_one, vec4_zero, vec4_zero);
+        vec4 color_factor = {0.6,0.6,0.6,  1.0};
+        draw_sprite(tr, depth, sprite, color_factor, vec4_zero, vec4_zero);
     }
 }
 
