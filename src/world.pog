@@ -129,7 +129,7 @@ const team_id_player = 1;
 
 Bullet* bullets = list_create(sizeof Bullet);
 
-Transform2D world_camera = {0,0, 0, 10};
+Transform2D world_camera = {{0,0}, 0, 10};
 
 struct SpaceshipType {
     char* name;
@@ -242,10 +242,28 @@ struct Entity {
 
     uint32 max_tractor_beams;
 
+    Gun* gun;
+    uint32 volley_shots;
+    float32 volley_cooldown;
+
     uint32 cargo_capacity;
     Cargo* cargo;
     Item item;
 }
+
+struct Gun {
+    uint32  volley_count;
+    float32 volley_cooldown;
+    float32 projectile_cooldown;
+    float32 hp_damage;
+}
+
+Gun gun_default = {
+    volley_count = 3,
+    volley_cooldown = 1,
+    projectile_cooldown = 0.1,
+    hp_damage = 0.6
+};
 
 struct Bullet {
     Entity* emitter;
@@ -313,10 +331,12 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     en.max_tractor_beams = 3;
 
+    en.gun = *gun_default;
+
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = st.cargo_capacity;
     // TODO: this should work: ({.Rock, 10} as Item)
-    add_item(en, {ItemKind.GoldOre, (random01() * en.cargo_capacity/2) as uint32} as Item);
+    add_item(en, {.GoldOre, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if st == *ship_types[5] {
         let turret = spawn_entity(vec2_zero, sprite_turret);
@@ -532,7 +552,7 @@ vec2 forward_vec(Transform2D tr) return up(tr) * {-1, 1};
 const bullet_muzzle_speed = 800;
 const bullet_random_muzzle_speed = 48;
 void fire_gun(Entity* en) {
-
+    if en.volley_shots >= en.gun.volley_count return;
     if en.cooldown <= 0 {
         let dir = forward_vec(en.tr);
 
@@ -544,8 +564,12 @@ void fire_gun(Entity* en) {
         list_add(*bullets, *bullet);
         audio_play(*wav_hallo, make_vec(bullet.pos, 0));
 
-        en.cooldown = 0.25;
         // en.cooldown = 0.1;
+
+        en.volley_shots++;
+        en.volley_cooldown = en.gun.volley_cooldown;
+        en.cooldown = en.gun.projectile_cooldown;
+
 
         uint32 num_p = 10;
         for 0 .. num_p {
@@ -670,6 +694,11 @@ void update_entity(Entity* en) {
 
     // en.ang_vel *= 0.99;
 
+    if en.volley_shots != 0 {
+        if en.volley_cooldown > 0  en.volley_cooldown -= dt;
+        else en.volley_shots = 0; // en.gun.volley_cooldown
+    }
+
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
 
@@ -688,8 +717,15 @@ void update_entity(Entity* en) {
         case .ship: {
             total_ships_in_play++;
 
+            uint32 int_hp = en.hp;
+
             float32 hp_regen_rate = 0.2; // hp/s
             en.hp = clamp(en.hp + hp_regen_rate*dt, 0, en.max_hp);
+
+            if int_hp != en.hp as uint32 {
+                en.color_outline = {1, 5, 1, 5};
+            }
+
 
             float32 prcnt = en.hp as float32 / en.max_hp;
             if prcnt < 0.3 {
@@ -927,7 +963,7 @@ bool default_col_response(Entity* en, Bullet* bullet) {
     if intersection >= 0 return false;
 
     if en.target == null
-    or en.target.entity_type == EntityType.asteroid
+    or en.target.entity_type == .asteroid
         en.target = bullet.emitter;
 
     if player and bullet.emitter == player  player.target = en;
@@ -1051,8 +1087,9 @@ void update_world() {
         static vec2 target_cam_pos = {};
         static float32 target_cam_zoom = 160;
 
-        const cam_min_zoom = 16;
-        const cam_max_zoom = 6000;
+        float32 cam_min_zoom = 16;
+        float32 cam_max_zoom = 6000;
+        if player cam_max_zoom = 400;
 
         target_cam_zoom = clamp(target_cam_zoom - target_cam_zoom*0.1*Input.mouse_scroll, cam_min_zoom, cam_max_zoom);
         float32 target_cam_scale = target_cam_zoom;

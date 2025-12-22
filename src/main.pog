@@ -57,6 +57,8 @@ include "src/agent.pog";
 
 Priority:
 
+    - entity.pivot
+
     - improve AI
         - detection range
         - passive behaviour
@@ -533,23 +535,20 @@ void draw_tabs(RenderLayer* l) {
 }
 
 void draw_minimap(vec2 center) {
+    float32 px = 2.0 / app.window_height;
 
     float32 scale = 0.12;
     let center_sector = get_sector_coord(world_camera.pos);
-    for y: -1 .. 2 {
-        for x: -1 .. 2 {
-            let pos = world_camera.pos / sector_size;
+    for y: -1 .. 2   for x: -1 .. 2 {
+        let pos = world_camera.pos / sector_size;
+        let sector_pos = center_sector + {x, y};
+        uint32 sector_level = (abs(sector_pos.x) + abs(sector_pos.y)) as uint32;
+        vec2 screen_pos = center + (sector_pos - pos) * scale;
 
-            // TODO: compiler should be able to infere type in this case:
-            // vec2 center_sector;
-            // let sector_pos = center_sector + {x, y};
+        UI_Rect rect = {screen_pos, {scale, scale}};
 
-            vec2 sector_pos = center_sector + {x, y};
-            uint32 sector_level = (abs(sector_pos.x) + abs(sector_pos.y)) as uint32;
-            vec2 screen_pos = center + (sector_pos - pos) * scale;
-            draw_rect(screen_pos, make_vec2(0.95) * scale, opacity(White, 0.8));
-            draw_text(screen_pos, 0.40 * scale, to_string(sector_level), Black);
-        }
+        draw_rect(pad(rect, 1*px), opacity(Gray, 0.3));
+        draw_text(screen_pos, 0.40 * scale, to_string(sector_level), Black);
     }
 
     vec2 world2minimap(vec2 wpos) {
@@ -562,17 +561,22 @@ void draw_minimap(vec2 center) {
         if is_dead(en) continue;
 
         Color color = Blue;
-        switch en.entity_type {
-            case .ship: color = Red; break;
-            case .station: color = Blue; break;
+        float32 m = 2;
+        switch (en.entity_type) {
+            case .ship:     color = Red;    m = 2; break;
+            case .station:  color = Blue;   m = 3; break;
             default: continue;
         }
 
-        draw_rect(center + world2minimap(en.tr.pos), make_vec2(0.07*scale), color);
+        // make_vec2(0.07*scale)
+
+        UI_Rect rect = {center + world2minimap(en.tr.pos)};
+        rect.size = {px, px} * m;
+
+        draw_rect(rect, color);
     }
 
-    draw_rect(center, make_vec2(0.1*scale), Green);
-
+    draw_rect(center, make_vec2(px*4), Green);
 }
 
 struct Blueprint_Unlcok_Progress_Popup {
@@ -587,40 +591,38 @@ void popup_blueprint_progress(SpaceshipType* st) {
     popup_blueprint.time = 0;
 }
 
-struct Gui_Bar {
-    float32 t;
-}
 
-void make_bar_jump(Gui_Bar* bar) {
-    bar.t = 1;
-}
+void draw_bar(UI_Rect rect, float32* time, float32 value, max_value, Color target_color) {
+    float32 px = 2.0 / app.window_height;
 
+    Color bar_bg  = rgba(0xA0_A0_A0_A0);
+    Color color_flash = lerp(@time, target_color, White);
 
-Gui_Bar bar_player_capacity = {};
-Gui_Bar bar_player_health = {};
-Gui_Bar bar_target_health = {};
-
-void draw_bar(UI_Rect rect, Gui_Bar* bar, float32 value, max_value, Color target_color) {
     float32 progress = value / max_value;
-    Color bar_bg  = rgba(0xAA_AA_AA_A0);
-
-    Color color_flash = lerp(bar.t, target_color, White);
+    UI_Rect rect_progress = scale_pivot(pad(rect, 4*px), progress, lerp(@time, 1, 1.5),  -1, 0);
 
     draw_rect(rect, bar_bg);
-    draw_rect(scale_pivot(rect, progress, lerp(bar.t, 1, 1.2),  -1,-1), color_flash);
+    draw_rect(rect_progress, color_flash);
 
     float32 h = rect.size.y;
-    UI_Rect rect_txt = child(rect, -1,0,   h/2.0, h);
+    UI_Rect rect_txt = child(rect_progress, 1,0,   h/2.0, h);
 
-    string float_str(float32 v) return trim_end(trim_end(to_string(v), '0'), '.');
-    vec2 pos = rect_txt.center;
-    pos = draw_text(pos, h, float_str(value), White);
-    pos = draw_text(pos, h, " / ", White);
-    pos = draw_text(pos, h, float_str(max_value), White);
+    uint32 display_value = value as uint32;
+    uint32 display_max_value = max_value as uint32;
+
+    if display_value != 0 and display_value != display_max_value {
+        let str_value = to_string(display_value);
+        vec2 pos = rect_txt.center;
+        draw_text_backwards(pos, h, str_value, White);
+    }
+
+    let str_max_value = to_string(display_max_value);
+    vec2 max_value_pos = point(rect, 1, 0) + {h/2.0, 0};
+    draw_text(max_value_pos, h, str_max_value, target_color);
 
     let dt = deltatime();
-    float32 rate = 10;
-    bar.t = exp_decay(bar.t, 0, rate, dt);
+    float32 rate = 8;
+    @time = exp_decay(@time, 0, rate, dt);
 }
 
 void draw_credits(vec2 pos, float32 height) {
@@ -648,24 +650,27 @@ void draw_credits(vec2 pos, float32 height) {
     if credits_to_add {
         pos = draw_text(pos, height, concat(" +", to_string(credits_to_add)), regular_color);
     }
-    anchor = .top_left;
-    draw_text(pos, height*0.5, "credits", regular_color);
-    anchor = .center;
+
+    float32 half = height*0.5;
+    draw_text(pos + {0, -half/2.0}, half, "credits", regular_color);
 }
 
 void draw_gui() {
-    float32 height = 0.07;
-
     UI_Rect rect_window = rect_pp(app.bottom_left, app.top_right);
 
-    if this_frame.player_pickup_item  make_bar_jump(*bar_player_capacity);
-    if this_frame.player_took_damage  make_bar_jump(*bar_player_health);
-    if this_frame.target_took_damage  make_bar_jump(*bar_target_health);
-
-    float32 h = height*1.5;
-    draw_credits(app.top_left + make_vec(h, -h), h);
+    float32 h = 0.07*1.5;
+    draw_credits(app.top_left + {h, -h}, h);
 
     if player {
+
+        static float32 capbar_t = 0;
+        static float32 hpbar_t  = 0;
+        static float32 tarbar_t = 0;
+
+        if this_frame.player_pickup_item  capbar_t = 1;
+        if this_frame.player_took_damage  hpbar_t  = 1;
+        if this_frame.target_took_damage  tarbar_t = 1;
+
         Color color_cargo  = rgba(0x10_60_E0_F0);
         Color color_health = rgba(0xFF_60_40_F0);
 
@@ -674,8 +679,9 @@ void draw_gui() {
         uint32 cargo_amt = cargo_amount(player);
         uint32 cargo_max = player.cargo_capacity;
 
+        float32 height = 0.055;
         UI_Rect rect_capbar = translate(child(rect_window, -1,-1,  width, height), height, height);
-        UI_Rect rect_hpbar  = translate(rect_capbar, 0, height * 1.5);
+        UI_Rect rect_hpbar  = translate(rect_capbar, 0, height * 1.1);
 
         if cargo_amt == cargo_max {
             float32 a = lerp((sinf(Tau * app.total_run_time as float32) + 1.0)*0.5, 0.1, 1);
@@ -685,13 +691,13 @@ void draw_gui() {
             draw_text(pos, height, "Drop Cargo: 'Q'", flash_color);
         }
 
-        draw_bar(rect_capbar, *bar_player_capacity, cargo_amt as float32, cargo_max as float32, color_cargo);
-        draw_bar(rect_hpbar,  *bar_player_health, player.hp, player.max_hp, color_health);
+        draw_bar(rect_capbar, *capbar_t, cargo_amt as float32, cargo_max as float32, color_cargo);
+        draw_bar(rect_hpbar,  *hpbar_t, player.hp, player.max_hp, color_health);
 
         if player.target {
             UI_Rect rect_tarbar = rect_capbar;
             rect_tarbar.center.x = -rect_tarbar.center.x;
-            draw_bar(rect_tarbar, *bar_target_health, player.target.hp, player.target.max_hp, color_health);
+            draw_bar(rect_tarbar, *tarbar_t, player.target.hp, player.target.max_hp, color_health);
 
             float32 h = rect_tarbar.size.y;
             draw_text(point(rect_tarbar, -1, 1.5), h, entity_to_str(player.target), White);
