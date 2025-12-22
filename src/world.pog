@@ -108,6 +108,8 @@ void cleanup_pool(EntityPool* pool) {
 const do_enemy_spawn = true;
 const linear_drag = 0.99;
 
+// const fixed_delta_time = 1.0 / 60.0;
+
 EntityPool entity_pool = init_pool();
 Entity* player;
 uint32 total_ships_in_play;
@@ -230,6 +232,8 @@ struct Entity {
     float32 drag_coff;
     float32 collider_radius;
 
+    float32 max_speed;
+
     uint32 level;
     float32 hp, max_hp;
     float32 shield_hp, max_shield_hp;
@@ -289,6 +293,8 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
     en.hp = en.max_hp;
     en.mass = size.x * size.y;
     en.drag_coff = 1;
+
+    en.max_speed = 200;
     return en;
 }
 
@@ -441,31 +447,37 @@ void apply_impulse(Entity* en, vec2 impulse) {
 }
 
 // note: |dir.x| <= 1 and |dir.y| <= 1
-void thrust(Entity* e, vec2 dir) {
+void thrust(Entity* en, vec2 dir) {
     if dir.x == 0.0 and dir.y == 0.0 return;
 
     const non_forward_factor = 0.7;
     dir.x *= non_forward_factor;
     if dir.y < 0  dir.y *= non_forward_factor;
-    dir = rotate_vec(dir, e.tr.rot);
+    dir = rotate_vec(dir, en.tr.rot);
 
     let dt = deltatime();
 
-    let force = dir * e.mass * 80; // * 80_000; // N
+    let force = dir * en.mass * 80; // * 80_000; // N
     let imp = force * dt;     // Ns
 
     // TODO: hack!
-    if e.entity_type == EntityType.missile  imp = imp * 6;
+    if en.entity_type == EntityType.missile  imp = imp * 6;
 
-    apply_impulse(e, imp);
+    // apply_impulse(en, imp);
+
+
+    float32 max_speed = 200;
+    float32 acceleration = 150;
+    vec2 target_vel = dir*max_speed;
+    en.vel = move(en.vel, target_vel, acceleration*dt);
 
 
     {
-        let sprite_size = get_sprite_pixel_size(e.sprite);
+        let sprite_size = get_sprite_pixel_size(en.sprite);
         vec2 offset = {0, -sprite_size.y / 2};
-        vec2 particle_pos = local2world(e.tr, offset);
+        vec2 particle_pos = local2world(en.tr, offset);
 
-        vec2    p_vel = e.vel - dir * 8000 * dt + random_vec2(20);
+        vec2    p_vel = en.vel - dir * 8000 * dt + random_vec2(20);
         float32 size = random_range(0.5, 1);
         float32 rot = random(global_seed++) * Pi;
         float32 ang_vel = 1;
@@ -484,8 +496,10 @@ void turn_to(Entity* en, vec2 target) {
     diff = rotate_vec(diff, -en.tr.rot);
     float32 angle = vec2_to_angle(diff);
 
+    static float32 P = 80;
+    static float32 D = 10;
 
-    let desired = 10*angle - 4*en.ang_vel;
+    let desired = P*angle - D*en.ang_vel;
     ang_accelerate(en, desired);
 
     // float32 A = 30;
@@ -654,7 +668,7 @@ void update_entity(Entity* en) {
     let F_drag = 0.5 * fluid_density * en.drag_coff * sqlength(en.vel);
     apply_impulse(en, neg(noz(en.vel)) * F_drag * dt);
 
-    en.ang_vel *= 0.99;
+    // en.ang_vel *= 0.99;
 
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
@@ -1182,8 +1196,8 @@ void update_world() {
 }
 
 void draw_background(vec2 cam_pos) {
-    const s = 30;
-    const spacing = 160;
+    const s = 15;
+    const spacing = 200;
     vec2 center = round2multiple(cam_pos, spacing);
     for x : -s .. s+1 for y : -s .. s+1 {
         ivec2 cell = make_ivec(center) + make_ivec(x, y) * spacing;
