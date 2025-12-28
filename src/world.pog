@@ -111,8 +111,9 @@ const linear_drag = 0.99;
 // const fixed_delta_time = 1.0 / 60.0;
 
 EntityPool entity_pool = init_pool();
-Entity* player;
 uint32 total_ships_in_play;
+Entity* player;
+Entity*[..] player_fleet = list_create(sizeof Entity*);
 
 
 uint32 player_credits = 0;
@@ -129,8 +130,6 @@ const team_id_player = 1;
 
 Bullet* bullets = list_create(sizeof Bullet);
 
-Transform2D world_camera = {{0,0}, 0, 10};
-
 struct SpaceshipType {
     char* name;
     vec2[] thrusters;
@@ -146,20 +145,22 @@ struct SpaceshipType {
     uint32 blueprints_required;
     uint32 blueprints_acquired;
 
+    float32 max_speed;
+    float32 max_acc;
 }
 
 const Ship_Type_Count = 10;
 SpaceshipType[] ship_types = {
-    { name = "humble",      sprite_index = 5,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0 },
-    { name = "small_cargo", sprite_index = 6,   hp = 25, cargo_capacity = 60,   build_cost = 90,  blueprints_required = 1 },
-    { name = "small_moth",  sprite_index = 7,   hp = 35, cargo_capacity = 40,   build_cost = 125, blueprints_required = 3 },
-    { name = "new",         sprite_index = 8,   hp = 50, cargo_capacity = 50,   build_cost = 300, blueprints_required = 4 },
-    { name = "large_agile", sprite_index = 9,   hp = 60, cargo_capacity = 35,   build_cost = 300, blueprints_required = 5 },
-    { name = "idunno",      sprite_index = 11,  hp = 60, cargo_capacity = 70,   build_cost = 300, blueprints_required = 5 },
-    { name = "moth",        sprite_index = 12,  hp = 60, cargo_capacity = 120,  build_cost = 300, blueprints_required = 5 },
-    { name = "big",         sprite_index = 13,  hp = 60, cargo_capacity = 150,  build_cost = 300, blueprints_required = 5 },
-    { name = "cool",        sprite_index = 14,  hp = 60, cargo_capacity = 55,   build_cost = 300, blueprints_required = 5 },
-    { name = "ftl_test",    sprite_index = 0,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0 }
+    { name = "humble",      sprite_index = 5,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0, max_speed = 150, max_acc = 100},
+    { name = "small_cargo", sprite_index = 6,   hp = 40, cargo_capacity = 100,  build_cost = 500, blueprints_required = 2, max_speed = 110, max_acc = 50},
+    { name = "small_moth",  sprite_index = 7,   hp = 80, cargo_capacity = 65,   build_cost = 700, blueprints_required = 3, max_speed = 200, max_acc = 150},
+    { name = "new",         sprite_index = 8,   hp = 50, cargo_capacity = 50,   build_cost = 300, blueprints_required = 4, max_speed = 200, max_acc = 100},
+    { name = "large_agile", sprite_index = 9,   hp = 60, cargo_capacity = 35,   build_cost = 300, blueprints_required = 5, max_speed = 200, max_acc = 100},
+    { name = "idunno",      sprite_index = 11,  hp = 60, cargo_capacity = 70,   build_cost = 300, blueprints_required = 5, max_speed = 200, max_acc = 100},
+    { name = "moth",        sprite_index = 12,  hp = 60, cargo_capacity = 120,  build_cost = 300, blueprints_required = 5, max_speed = 200, max_acc = 100},
+    { name = "big",         sprite_index = 13,  hp = 60, cargo_capacity = 150,  build_cost = 300, blueprints_required = 5, max_speed = 200, max_acc = 100},
+    { name = "cool",        sprite_index = 14,  hp = 60, cargo_capacity = 55,   build_cost = 300, blueprints_required = 5, max_speed = 200, max_acc = 100},
+    { name = "ftl_test",    sprite_index = 0,   hp = 20, cargo_capacity = 40,   build_cost = 0,   blueprints_required = 0, max_speed = 200, max_acc = 100}
 };
 
 
@@ -220,6 +221,7 @@ struct Entity {
 
     with Transform2D tr;
     float32 depth;
+    vec2 pivot;
 
     Sprite sprite;
     vec4 color_factor;
@@ -233,6 +235,7 @@ struct Entity {
     float32 collider_radius;
 
     float32 max_speed;
+    float32 max_acc;
 
     uint32 level;
     float32 hp, max_hp;
@@ -242,28 +245,63 @@ struct Entity {
 
     uint32 max_tractor_beams;
 
-    Gun* gun;
-    uint32 volley_shots;
-    float32 volley_cooldown;
+    Gun_Stat* gun_stat;
+    Gun gun1;
+    Gun gun2;
 
     uint32 cargo_capacity;
     Cargo* cargo;
     Item item;
 }
 
-struct Gun {
+struct Gun_Stat {
     uint32  volley_count;
     float32 volley_cooldown;
     float32 projectile_cooldown;
     float32 hp_damage;
+    float32 max_angle_of_rotation; // Tau would be a turret
+
+
+
+    float32 muzzle_speed;
+    float32 spread;
 }
 
-Gun gun_default = {
+Gun_Stat gun_default = {
     volley_count = 3,
     volley_cooldown = 1,
     projectile_cooldown = 0.1,
-    hp_damage = 0.6
+    hp_damage = 0.6,
+    max_angle_of_rotation = Pi/2.0,
+    muzzle_speed = 800,
+    spread = 48
 };
+
+Gun_Stat gun_burst = {
+    volley_count = 6,
+    volley_cooldown = 1.5,
+    projectile_cooldown = 0.01,
+    hp_damage = 0.3,
+    max_angle_of_rotation = Pi/2.0,
+    muzzle_speed = 400,
+    spread = 90
+};
+
+Gun_Stat gun_minigun = {
+    volley_count = 90,
+    volley_cooldown = 3,
+    projectile_cooldown = 0.1,
+    hp_damage = 0.1,
+    max_angle_of_rotation = Pi/2.0,
+    muzzle_speed = 600,
+    spread = 90
+};
+
+struct Gun {
+    uint32 volley_shots;
+    float32 volley_cooldown;
+    float32 projectile_cooldown;
+}
 
 struct Bullet {
     Entity* emitter;
@@ -271,6 +309,7 @@ struct Bullet {
     vec2 vel;
     float32 life_time;
     uint32 team_id;
+    float32 damage;
 }
 
 void spawn_bullet(vec2 pos, vec2 vel, uint32 team_id) {
@@ -313,6 +352,7 @@ Entity* spawn_entity(vec2 pos, Sprite sprite) {
     en.drag_coff = 1;
 
     en.max_speed = 200;
+    en.max_acc = 2000;
     return en;
 }
 
@@ -323,6 +363,9 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
     en.entity_type = .ship;
     en.ship_type = st;
 
+    en.max_speed = st.max_speed;
+    en.max_acc = st.max_acc;
+
     en.max_hp = st.hp;
     en.hp = en.max_hp;
     en.max_shield_hp = 5;
@@ -331,7 +374,9 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     en.max_tractor_beams = 3;
 
-    en.gun = *gun_default;
+    en.gun_stat = *gun_default;
+    // en.gun_stat = *gun_burst;
+    // en.gun_stat = *gun_minigun;
 
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = st.cargo_capacity;
@@ -355,6 +400,7 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
 Entity* spawn_player() {
     let en = spawn_ship(vec2_zero, 0, team_id_player);
+    list_add(*player_fleet, *en);
     return en;
 }
 
@@ -477,19 +523,16 @@ void thrust(Entity* en, vec2 dir) {
 
     let dt = deltatime();
 
-    let force = dir * en.mass * 80; // * 80_000; // N
-    let imp = force * dt;     // Ns
+    // let force = dir * en.mass * 80; // * 80_000; // N
+    // let imp = force * dt;     // Ns
 
-    // TODO: hack!
-    if en.entity_type == EntityType.missile  imp = imp * 6;
+    // // TODO: hack!
+    // if en.entity_type == EntityType.missile  imp = imp * 6;
 
-    // apply_impulse(en, imp);
+    // // apply_impulse(en, imp);
 
-
-    float32 max_speed = 200;
-    float32 acceleration = 150;
-    vec2 target_vel = dir*max_speed;
-    en.vel = move(en.vel, target_vel, acceleration*dt);
+    vec2 target_vel = dir*en.max_speed;
+    en.vel = move(en.vel, target_vel, en.max_acc*dt);
 
 
     {
@@ -516,6 +559,10 @@ void turn_to(Entity* en, vec2 target) {
     diff = rotate_vec(diff, -en.tr.rot);
     float32 angle = vec2_to_angle(diff);
 
+    turn_to(en, angle);
+}
+
+void turn_to(Entity* en, float32 angle) {
     static float32 P = 80;
     static float32 D = 10;
 
@@ -549,41 +596,70 @@ void turn_to(Entity* en, vec2 target) {
 
 vec2 forward_vec(Transform2D tr) return up(tr) * {-1, 1};
 
-const bullet_muzzle_speed = 800;
-const bullet_random_muzzle_speed = 48;
-void fire_gun(Entity* en) {
-    if en.volley_shots >= en.gun.volley_count return;
-    if en.cooldown <= 0 {
-        let dir = forward_vec(en.tr);
+vec2 calc_gun_aim_dir(Entity* en, Gun_Stat* stat, vec2 gun_pos, target) {
+    let dir = target - gun_pos;
+    let forw = forward_vec(en.tr);
+    float32 a = sign_angle(dir, forw);
+    float32 ha = stat.max_angle_of_rotation/2.0
+    a = clamp(a, -ha, ha);
+    dir = rotate_vec(forw, a);
+    return dir;
+}
 
-        Bullet bullet = {};
-        bullet.emitter = en;
-        bullet.pos = en.tr.pos + dir * en.collider_radius;
-        bullet.vel = en.vel + dir * bullet_muzzle_speed + random_vec2(bullet_random_muzzle_speed);
-        bullet.team_id = en.team_id;
-        list_add(*bullets, *bullet);
-        audio_play(*wav_hallo, make_vec(bullet.pos, 0));
+void draw_aim(vec2 pos, dir) {
 
-        // en.cooldown = 0.1;
+    vec4 color_factor   = {0.5,0.5,0.5,  0.1};
+    vec4 color_additive = vec4_zero;
+    vec4 color_outline  = vec4_zero;
 
-        en.volley_shots++;
-        en.volley_cooldown = en.gun.volley_cooldown;
-        en.cooldown = en.gun.projectile_cooldown;
+    float32 len = 500;
+    vec2 uv_offset = vec2_zero;
+    vec2 uv_scale  = {1.0 / len, 1};
+    Transform2D tr = {scale=len};
+    tr.pos = (pos*2 + dir*len)/2.0;
+    tr.rot = sign_angle(dir, vec2_unit_y);
+
+    draw_texture(
+        draw2d_renderer.quad_db, tr, 0.0,
+        white_texture,
+        true, uv_offset, uv_scale,
+        color_factor, color_additive, color_outline);
+}
+
+void fire_gun(Entity* en, Gun* gun, Gun_Stat* stat, vec2 target, offset) {
+    if gun.volley_shots >= stat.volley_count return;
+    if gun.projectile_cooldown > 0 return;
+
+    let gun_pos = local2world(en.tr, offset);
+    vec2 dir = calc_gun_aim_dir(en, stat, gun_pos, target);
+
+    Bullet bullet = {};
+    bullet.emitter = en;
+    bullet.pos = gun_pos;
+    bullet.vel = en.vel + dir * stat.muzzle_speed + random_vec2(stat.spread);
+    bullet.team_id = en.team_id;
+    bullet.damage = stat.hp_damage;
+    list_add(*bullets, *bullet);
+
+    audio_play(*wav_hallo, make_vec(bullet.pos, 0));
+
+    gun.volley_shots++;
+    gun.volley_cooldown = stat.volley_cooldown;
+    gun.projectile_cooldown = stat.projectile_cooldown;
 
 
-        uint32 num_p = 10;
-        for 0 .. num_p {
+    uint32 num_p = 10;
+    for 0 .. num_p {
 
-            vec2    p_vel = en.vel + (dir*40 + random_vec2(20)) * random01();
-            float32 size = 0.5;
-            float32 rot = random(global_seed++) * Pi;
-            float32 ang_vel = 1;
-            float32 life_time = 1;
-            vec4    color = color_to_vec4(rgba(0xFF6A00FF));
+        vec2    p_vel = en.vel + (dir*40 + random_vec2(20)) * random01();
+        float32 size = 0.5;
+        float32 rot = random(global_seed++) * Pi;
+        float32 ang_vel = 1;
+        float32 life_time = 1;
+        vec4    color = color_to_vec4(rgba(0xFF6A00FF));
 
-            let p = make_particle(bullet.pos, p_vel, size, rot, ang_vel, life_time, color, 0);
-            spawn_particle(p);
-        }
+        let p = make_particle(bullet.pos, p_vel, size, rot, ang_vel, life_time, color, 0);
+        spawn_particle(p);
     }
 }
 
@@ -694,10 +770,23 @@ void update_entity(Entity* en) {
 
     // en.ang_vel *= 0.99;
 
-    if en.volley_shots != 0 {
-        if en.volley_cooldown > 0  en.volley_cooldown -= dt;
-        else en.volley_shots = 0; // en.gun.volley_cooldown
+    void update_gun(Gun* gun, float32 dt) {
+        if gun.projectile_cooldown > 0  gun.projectile_cooldown -= dt;
+
+        // if gun.volley_shots != 0 {
+            if gun.volley_cooldown > 0  gun.volley_cooldown -= dt;
+            else gun.volley_shots = 0;
+        // }
     }
+
+    update_gun(*en.gun1, dt);
+    update_gun(*en.gun2, dt);
+
+    // if en.volley_shots != 0 {
+    //     if en.volley_cooldown > 0  en.volley_cooldown -= dt;
+    //     else en.volley_shots = 0;
+    // }
+
 
     if en.cooldown > 0  en.cooldown -= dt;
     if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
@@ -805,8 +894,9 @@ void update_entity(Entity* en) {
 
         case .turret: {
             if en.parent and en.parent.target {
-                turn_to(en, en.parent.target.tr.pos);
-                fire_gun(en);
+                let target_pos = en.parent.target.tr.pos;
+                turn_to(en, target_pos);
+                fire_gun(en, *en.gun1, en.gun_stat, target_pos, make_vec(0, 1) * en.collider_radius);
             }
         } break;
 
@@ -988,14 +1078,12 @@ bool default_col_response(Entity* en, Bullet* bullet) {
         spawn_particle(p);
     }
 
-    float32 damage = 1.0;
-
     if en.shield_hp > 0.0 {
         bullet.vel = ref;
-        en.shield_hp -= damage;
+        en.shield_hp -= bullet.damage;
         audio_play(*wav_hallo, make_vec(bullet.pos, 0));
     } else {
-        en.hp -= damage;
+        en.hp -= bullet.damage;
 
         audio_play(*wav_hallo, make_vec(en.tr.pos, -en.depth));
 
@@ -1080,10 +1168,14 @@ void update_world() {
     let dt = deltatime();
 
     if player and is_dead(player)   player = null;
+    for 0 .. list_length(player_fleet) {
+        Entity* en = player_fleet[it];
+        if is_dead(en)  list_unordered_remove(player_fleet, it);
+    }
 
     if key_pressed(GLFW_KEY_SPACE)  player = null;
 
-    { // world_camera controlls:
+    { // camera_world controlls:
         static vec2 target_cam_pos = {};
         static float32 target_cam_zoom = 160;
 
@@ -1101,20 +1193,40 @@ void update_world() {
             target_cam_pos = target_cam_pos + Input.wasd * target_cam_zoom / 100;
         }
 
-        world_camera.pos = exp_decay(world_camera.pos, target_cam_pos, 4, dt);
-        world_camera.scale = exp_decay(world_camera.scale, target_cam_scale, 5, dt);
+        camera_world.pos = exp_decay(camera_world.pos, target_cam_pos, 4, dt);
+        camera_world.scale = exp_decay(camera_world.scale, target_cam_scale, 5, dt);
     }
 
-    vec2 mouse_world_pos = get_mouse_world_coord(world_camera);
+    vec2 mouse_world_pos = get_mouse_world_coord(camera_world);
 
 
     if player {
         let sector = get_sector(player.tr.pos);
         sector.discovered = true;
 
+        let target = mouse_world_pos;
+
         thrust(player, Input.wasd);
-        turn_to(player, mouse_world_pos);
-        if mouse(Left_Mouse) fire_gun(player);
+        turn_to(player, target);
+        if !key_down(Key.left_shift) {
+            let en = player;
+            let offset = make_vec(1, -0.2) * en.collider_radius
+
+            if mouse_down(MouseButton.Left) {
+                fire_gun(en, *en.gun1, en.gun_stat, target, offset);
+                fire_gun(en, *en.gun2, en.gun_stat, target, offset*{-1, 1});
+            }
+
+            void draw_gun_aim(Entity* en, vec2 offset, target) {
+                let gun_pos = local2world(en.tr, offset);
+                vec2 dir = calc_gun_aim_dir(en, en.gun_stat, gun_pos, target);
+                draw_aim(gun_pos, dir);
+            }
+
+            draw_gun_aim(en, offset, target);
+            draw_gun_aim(en, offset*{-1, 1}, target);
+        }
+
         if mouse_pressed(Right_Mouse) {
             spawn_missile(player);
 
@@ -1123,11 +1235,6 @@ void update_world() {
 
         if key_pressed('Q') drop_cargo(player, 2);
 
-        // const font_size = 0.1;
-        // vec2 pos = {-1, 1 - font_size / 2};
-        // pos = draw_text(pos, font_size, to_string(player.hp as uint64), White);
-        // pos = draw_text(pos, font_size, " / ", White);
-        // pos = draw_text(pos, font_size, to_string(player_max_hp), White);
     } else {
         // player = spawn_player();
 
@@ -1163,13 +1270,12 @@ void update_world() {
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
         let en = query_entity(mouse_world_pos);
-        if en and en.entity_type == EntityType.ship and is_unlocked(en.ship_type) {
+        if en and en.entity_type == .ship and en.team_id == team_id_player {
             player = en;
-            player.team_id = team_id_player;
         }
     }
 
-    draw_background(world_camera.pos);
+    draw_background(camera_world.pos);
 
     sort_entities_into_chunks();
 
@@ -1181,7 +1287,7 @@ void update_world() {
     }
 
     if total_ships_in_play < 10 {
-        vec2 pos = world_camera.pos + {random(), random()} * sector_size/2;
+        vec2 pos = camera_world.pos + {random(), random()} * sector_size/2;
         spawn_enemy(pos);
     }
 
@@ -1381,7 +1487,7 @@ Chunk* get_chunk_with_coord(ivec2 coord) {
 void sort_entities_into_chunks() {
 
     static ivec2 prev_center = {};
-    ivec2 center = get_chunk_coord(world_camera.pos);
+    ivec2 center = get_chunk_coord(camera_world.pos);
 
     if !equals(prev_center, center) {
 

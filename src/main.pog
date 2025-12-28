@@ -55,6 +55,10 @@ include "src/agent.pog";
     - biome: dusty
     - biome: acidic
 
+    - bounty system (makes hordes of enemies spawn to attack you)
+
+    - draw gun aim direction
+
 Priority:
 
     - entity.pivot
@@ -206,7 +210,10 @@ char*[] tab_names = {"ships", "cargo", "tech", "map", "esc"};
 bool menu_open = false;
 Menu_Tabs menu_tab = .Ships;
 
+Transform2D camera_world = {{0,0}, 0, 10};
+Transform2D camera_map = {scale = 6000};
 Transform2D camera_to_dispatch;
+
 RenderLayer world_ui_layer;
 RenderLayer ui_layer;
 
@@ -309,11 +316,17 @@ void main() {
 
     audio_init(*wav_hallo);
     while grax_loop() {
-        audio_loop(make_vec(world_camera.pos, world_camera.scale), 0.2);
+        audio_loop(make_vec(camera_world.pos, camera_world.scale), 0.2);
 
         static bool draw_list = false;
         if key_pressed(GLFW_KEY_F2) draw_list = !draw_list;
         if draw_list draw_entity_list();
+
+        if key_pressed(Key.tab) {
+            menu_open = !menu_open;
+            camera_map = camera_world;
+            camera_map.scale *= 2;
+        }
 
         if menu_open {
             draw_menu();
@@ -323,10 +336,9 @@ void main() {
             draw_gui();
             vec2 center = {1.2, 0.7};
             draw_minimap(center);
-            camera_to_dispatch = world_camera;
+            camera_to_dispatch = camera_world;
         }
 
-        if key_pressed(GLFW_KEY_TAB) menu_open = !menu_open;
 
 
         if key_pressed('Y') {
@@ -421,7 +433,13 @@ SpaceshipType* ship_selection_menu() {
 }
 
 void draw_menu() {
+
+    let old_tab = menu_tab;
     draw_tabs(*ui_layer);
+    if old_tab != menu_tab and menu_tab == .Map {
+        camera_map = camera_world;
+        camera_map.scale *= 2;
+    }
 
     switch (menu_tab) {
     case .Ships: {
@@ -430,8 +448,9 @@ void draw_menu() {
             if player_credits >= st.build_cost {
                 player_credits -= st.build_cost;
                 menu_open = false;
-                if player despawn(player);
-                player = spawn_ship(world_camera.pos + random_vec2(chunk_size*0.5), st, team_id_player);
+
+                player = spawn_ship(camera_world.pos + random_vec2(chunk_size*0.5), st, team_id_player);
+                list_add(*player_fleet, *player);
             }
         }
     } break;
@@ -439,13 +458,16 @@ void draw_menu() {
     case .Tech: break;
     case .Map: {
 
-        static Transform2D map_cam = {scale = 6000};
-        mouse_drag_control(*map_cam);
-        camera_to_dispatch = map_cam;
+        mouse_drag_control(*camera_map);
+        camera_to_dispatch = camera_map;
 
         let l = *world_ui_layer;
 
         // draw_minimap(vec2_zero);
+
+
+        // TODO: hmm... should we draw the background on the map?
+        // draw_background(camera_map.pos);
 
         for y: 0 .. sector_count_sqrt for x: 0 .. sector_count_sqrt {
 
@@ -464,7 +486,7 @@ void draw_menu() {
             vec2 pos = make_vec(spos) * sector_size;
             vec2 size = {sector_size, sector_size};
             UI_Rect rect = {pos, size};
-            float32 pixel_size = 2.0 / app.window_height * map_cam.scale;
+            float32 pixel_size = 2.0 / app.window_height * camera_map.scale;
             rect.size = rect.size - vec2_one*pixel_size;
             draw_rect(l, rect, bg_color);
 
@@ -481,18 +503,25 @@ void draw_menu() {
             if is_dead(en) continue;
 
             vec4 color_fac = vec4_one;
-            if en.entity_type == EntityType.ship {
+            vec4 color_add = vec4_zero;
+            vec4 color_out = vec4_zero;
+            if en.entity_type == .ship {
                 float32 t = (sin(app.total_run_time*5.0) + 1.0) / 2.0;
                 float32 w = lerp(t, 0.4, 1);
-                if en.team_id == team_id_player   color_fac = {0,0,w,1};
-                else color_fac = {w,0,0,1};
-            } else if en.entity_type == EntityType.asteroid {
+                if en.team_id == team_id_player {
+                    color_fac = {0.2,0.2,w,1};
+                    color_add = {0,0,w,1};
+                } else {
+                    color_fac = {w,0.2,0.2,1};
+                    color_add = {w,0,0,1};
+                }
+            } else if en.entity_type == .asteroid {
                 float32 v = 0.3;
                 color_fac = {v,v,v,1};
             }
 
-            DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
-            draw_sprite(db, en.tr, en.depth, en.sprite, color_fac, en.color_additive, en.color_outline);
+            DrawBuffers db = en.entity_type == .debris ? db_debris[en.level] : draw2d_renderer.quad_db;
+            draw_sprite(db, en.tr, en.depth, en.sprite, color_fac, color_add, color_out);
         }
     } break;
     case .Esc: break;
@@ -538,9 +567,9 @@ void draw_minimap(vec2 center) {
     float32 px = 2.0 / app.window_height;
 
     float32 scale = 0.12;
-    let center_sector = get_sector_coord(world_camera.pos);
+    let center_sector = get_sector_coord(camera_world.pos);
     for y: -1 .. 2   for x: -1 .. 2 {
-        let pos = world_camera.pos / sector_size;
+        let pos = camera_world.pos / sector_size;
         let sector_pos = center_sector + {x, y};
         uint32 sector_level = (abs(sector_pos.x) + abs(sector_pos.y)) as uint32;
         vec2 screen_pos = center + (sector_pos - pos) * scale;
@@ -553,7 +582,7 @@ void draw_minimap(vec2 center) {
 
     vec2 world2minimap(vec2 wpos) {
         float32 scale = 0.12;
-        return (wpos - world_camera.pos) / sector_size * scale;
+        return (wpos - camera_world.pos) / sector_size * scale;
     }
 
     for 0 .. entity_pool.count {
@@ -656,10 +685,22 @@ void draw_credits(vec2 pos, float32 height) {
 }
 
 void draw_gui() {
+    float32 px = 2.0 / app.window_height;
     UI_Rect rect_window = rect_pp(app.bottom_left, app.top_right);
 
     float32 h = 0.07*1.5;
     draw_credits(app.top_left + {h, -h}, h);
+
+    {
+        uint32 fleet_count = list_length(player_fleet);
+        UI_Rect rect_fleet = child(rect_window, -1,0,   100*px, fleet_count*50*px);
+        draw_rect(rect_fleet, opacity(Black, 0.6));
+        for 0 .. fleet_count {
+            let en = player_fleet[it];
+            UI_Rect rect_ship = div_y(rect_fleet, fleet_count, it);
+            draw_rect(pad(rect_ship, px), opacity(White, 0.4));
+        }
+    }
 
     if player {
 
@@ -758,7 +799,7 @@ void draw_entity_properties_menu(Entity* en) {
 
     vec2 pos = {-1, 1 - text_height};
 
-    // pos = (pos - world_camera.pos) / world_camera.scale;
+    // pos = (pos - camera_world.pos) / camera_world.scale;
 
     pos = draw_text(pos, text_height, concat("ID              : ", to_string(entity_index(en)), "\n"), White);
     pos = draw_text(pos, text_height, concat("parent          : ", entity_to_str(en.parent), "\n"), White);
@@ -828,7 +869,7 @@ void draw_entity_list() {
             if mouse(Left_Mouse) {
                 selected_entity = en;
                 // player = en;
-                // world_camera.pos = en.tr.pos;
+                // camera_world.pos = en.tr.pos;
             }
         }
 
@@ -908,7 +949,7 @@ void save_game() {
         save.player_ship_type = 1 + (player.ship_type as uint64 - ship_types.data as uint64) / sizeof SpaceshipType;
         save.player_cargo = player.cargo ? @player.cargo : {};
     } else {
-        save.player_pos = world_camera.pos;
+        save.player_pos = camera_world.pos;
     }
 
     for 0 .. ship_types.length {
@@ -924,7 +965,7 @@ void load_game() {
 
     player_credits = save.player_credits;
 
-    world_camera.pos = save.player_pos;
+    camera_world.pos = save.player_pos;
     if save.player_ship_type {
         player = spawn_ship(save.player_pos, save.player_ship_type - 1, team_id_player);
         @player.cargo = save.player_cargo;

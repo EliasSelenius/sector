@@ -12,12 +12,23 @@ void update_ai(Entity* en) {
             if en.target {
                 agent_attack(en, en.target);
             } else {
-                let d = sqdist(en.target_pos, en.tr.pos);
-                if d < 60*60 or d > chunk_size*chunk_size {
-                    en.target_pos = en.tr.pos + {random(global_seed++), random(global_seed++)} * 600;
-                }
+                if en.team_id == team_id_player {
+                    if player {
 
-                agent_goto(en, en.target_pos);
+                        en.target = player.target and player.target.entity_type == .ship ? player.target : null;
+                        en.target_pos = player.tr.pos;
+
+                        agent_follow(en, player);
+                        // agent_goto(en, en.target_pos);
+                    }
+                } else {
+                    let d = sqdist(en.target_pos, en.tr.pos);
+                    if d < 60*60 or d > chunk_size*chunk_size {
+                        en.target_pos = en.tr.pos + {random(global_seed++), random(global_seed++)} * 600;
+                    }
+
+                    agent_goto(en, en.target_pos);
+                }
             }
 
         } break;
@@ -54,6 +65,18 @@ void update_ai(Entity* en) {
 
 }
 
+void agent_follow(Entity* en, other) {
+    float32 radius = 100;
+    if sqdist(en.tr.pos, other.tr.pos) < sq(radius) {
+        if sqlength(other.vel) > sq(0.5 * other.max_speed) {
+            turn_to(en, other.tr.rot - en.tr.rot);
+            thrust(en, vec2_unit_y);
+        }
+    } else {
+        agent_goto(en, other.tr.pos);
+    }
+}
+
 void agent_goto(Entity* en, vec2 pos) {
     turn_to(en, pos);
     thrust(en, vec2_unit_y);
@@ -62,7 +85,7 @@ void agent_goto(Entity* en, vec2 pos) {
 void agent_attack(Entity* en, target) {
     let d = circle_dist(en, target);
 
-    float32 seconds = d / bullet_muzzle_speed;
+    float32 seconds = d / en.gun_stat.muzzle_speed;
     let target_pos = target.tr.pos + target.vel * seconds;
 
     // Transform2D tr = {};
@@ -73,7 +96,7 @@ void agent_attack(Entity* en, target) {
     turn_to(en, target_pos);
     // look_at(*en.tr, target_pos);
 
-    if d < 15*16  fire_gun(en);
+    if d < 15*16  fire_gun(en, *en.gun1, en.gun_stat, target_pos, make_vec(0, 1) * en.collider_radius);
 
     float32 min_dist = 80;
     float32 max_dist = 200;
