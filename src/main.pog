@@ -196,7 +196,7 @@ void loadassets() {
         sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
-    sprite_turret = get_sprite(*spritesheet, 9);
+    sprite_turret = get_sprite(*spritesheet, 10);
     sprite_spacestation = get_sprite(*spritesheet, 16);
 
     sprite_projectile.is_semi_transparent = true;
@@ -339,7 +339,9 @@ void main() {
             camera_to_dispatch = camera_world;
         }
 
-
+        if key_pressed(Key.backspace) {
+            unlock_all_ships();
+        }
 
         if key_pressed('Y') {
             save_game();

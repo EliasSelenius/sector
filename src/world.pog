@@ -171,6 +171,14 @@ SpaceshipType* get_ship_by_level(uint32 level) {
 bool is_unlocked(SpaceshipType* st) return st.blueprints_acquired >= st.blueprints_required;
 uint32 unlock_percent(SpaceshipType* st) return (st.blueprints_acquired as float32 / st.blueprints_required * 100.0) as uint32;
 
+void unlock_all_ships() {
+    for 0 .. ship_types.length {
+        let st = *ship_types[it];
+        st.blueprints_acquired = st.blueprints_required;
+        st.build_cost = 0;
+    }
+}
+
 enum EntityType {
     none;            // default no behaviour
     ready_for_reuse; // dead entities will be marked ready for reuse
@@ -222,6 +230,7 @@ struct Entity {
     with Transform2D tr;
     float32 depth;
     vec2 pivot;
+    vec2 local_pos;
 
     Sprite sprite;
     vec4 color_factor;
@@ -384,11 +393,14 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
     add_item(en, {.GoldOre, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if st == *ship_types[5] {
-        let turret = spawn_entity(vec2_zero, sprite_turret);
+        let turret = spawn_entity(en.tr.pos, sprite_turret);
         turret.entity_type = .turret;
         turret.parent = en;
         turret.team_id = en.team_id;
         turret.depth = -0.01;
+        turret.pivot = {0, -7};
+        turret.local_pos = {0, -19};
+        turret.gun_stat = *gun_default;
     }
 
     if st == *ship_types[9] {
@@ -600,7 +612,7 @@ vec2 calc_gun_aim_dir(Entity* en, Gun_Stat* stat, vec2 gun_pos, target) {
     let dir = target - gun_pos;
     let forw = forward_vec(en.tr);
     float32 a = sign_angle(dir, forw);
-    float32 ha = stat.max_angle_of_rotation/2.0
+    float32 ha = stat.max_angle_of_rotation/2.0;
     a = clamp(a, -ha, ha);
     dir = rotate_vec(forw, a);
     return dir;
@@ -789,7 +801,7 @@ void update_entity(Entity* en) {
 
 
     if en.cooldown > 0  en.cooldown -= dt;
-    if en.parent  en.tr.pos = local2world(en.parent.tr, vec2_zero);
+    if en.parent  en.tr.pos = local2world(en.parent.tr, en.local_pos);
 
     // draw shield
     if en.shield_hp > 0.0 {
@@ -1039,7 +1051,21 @@ void update_entity(Entity* en) {
     }
 
     DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
-    draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive, en.color_outline);
+    let tex = en.sprite.tex;
+
+    Draw2D_Instance_Data ins_data = {};
+    ins_data.pos = make_vec(local2world(en.tr, en.pivot*-1), en.depth);
+    ins_data.rot = en.tr.rot;
+    ins_data.scale   = en.sprite.uv_scale * make_vec(tex.width, tex.height) * en.tr.scale;
+    ins_data.uv_offset = en.sprite.uv_offset;
+    ins_data.uv_scale  = en.sprite.uv_scale;
+    ins_data.color_factor   = en.color_factor;
+    ins_data.color_additive = en.color_additive;
+    ins_data.color_outline  = en.color_outline;
+
+    // draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive, en.color_outline);
+
+    draw_texture(db, tex, ins_data, en.sprite.is_semi_transparent);
 
     en.color_additive = exp_decay(en.color_additive, vec4_zero, 10, dt);
     en.color_outline = exp_decay(en.color_outline, vec4_zero, 1, dt);
@@ -1210,7 +1236,7 @@ void update_world() {
         turn_to(player, target);
         if !key_down(Key.left_shift) {
             let en = player;
-            let offset = make_vec(1, -0.2) * en.collider_radius
+            let offset = make_vec(1, -0.2) * en.collider_radius;
 
             if mouse_down(MouseButton.Left) {
                 fire_gun(en, *en.gun1, en.gun_stat, target, offset);
