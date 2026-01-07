@@ -71,9 +71,7 @@ EntityPool init_pool() {
 Entity* entity_new(EntityPool* pool) {
     for 0 .. pool.count {
         let en = *pool.data[it];
-        // TODO: error: Cannot infer implicit dereferencing ".ready_for_reuse".
-        // we should be able to use implicit dereferencing here
-        if en.entity_type == EntityType.ready_for_reuse  return en;
+        if en.entity_type == .ready_for_reuse  return en;
     }
 
     // TODO: should vmem_commit be wrapped in a condition for performance?
@@ -92,6 +90,12 @@ void cleanup_pool(EntityPool* pool) {
                 free(en.cargo);
                 en.cargo = null;
             }
+
+            if en.guns {
+                list_delete(en.guns);
+                en.guns = null;
+            }
+
             en.entity_type = .ready_for_reuse;
         }
     }
@@ -108,7 +112,7 @@ void cleanup_pool(EntityPool* pool) {
 const do_enemy_spawn = true;
 const linear_drag = 0.99;
 
-// const fixed_delta_time = 1.0 / 60.0;
+const fixed_delta_time = 1.0 / 60.0;
 
 EntityPool entity_pool = init_pool();
 uint32 total_ships_in_play;
@@ -116,8 +120,8 @@ Entity* player;
 Entity*[..] player_fleet = list_create(sizeof Entity*);
 
 
-uint32 player_credits = 0;
-uint32 credits_to_add = 0;
+uint32 player_credits;
+uint32 credits_to_add;
 float32 delay_payment;
 
 void add_credits(uint32 c) {
@@ -128,7 +132,7 @@ void add_credits(uint32 c) {
 const team_id_asteroids = 0;
 const team_id_player = 1;
 
-Bullet* bullets = list_create(sizeof Bullet);
+Bullet[..] bullets = list_create(sizeof Bullet);
 
 struct SpaceshipType {
     char* name;
@@ -215,6 +219,16 @@ char* entity_to_str(Entity* en) {
     return en ? entity_type_names[en.entity_type] : "null";
 }
 
+enum Entity_Flags {
+    none = 0;
+    fire_guns = 1;
+}
+
+void set_flags(Entity* en, Entity_Flags f, bool value) {
+    if value en.flags |= f;
+    else en.flags &= ~f;
+}
+
 struct Entity {
     Entity* parent;
     Entity* target;
@@ -224,6 +238,8 @@ struct Entity {
     SpaceshipType* ship_type;
 
     EntityType entity_type;
+    Entity_Flags flags;
+
     Agent_Behaviour behaviour;
     vec2 target_pos;
 
@@ -254,9 +270,7 @@ struct Entity {
 
     uint32 max_tractor_beams;
 
-    Gun_Stat* gun_stat;
-    Gun gun1;
-    Gun gun2;
+    Gun[..] guns;
 
     uint32 cargo_capacity;
     Cargo* cargo;
@@ -269,8 +283,6 @@ struct Gun_Stat {
     float32 projectile_cooldown;
     float32 hp_damage;
     float32 max_angle_of_rotation; // Tau would be a turret
-
-
 
     float32 muzzle_speed;
     float32 spread;
@@ -307,9 +319,23 @@ Gun_Stat gun_minigun = {
 };
 
 struct Gun {
+    Gun_Stat* stat;
+
+    vec2 local_pos;
+
     uint32 volley_shots;
     float32 volley_cooldown;
     float32 projectile_cooldown;
+}
+
+void add_gun(Entity* en, vec2 offset, Gun_Stat* stat) {
+    if en.guns == null  en.guns = list_create(sizeof Gun);
+
+    Gun gun = {};
+    gun.stat = stat;
+    gun.local_pos = offset;
+
+    list_add(*en.guns, *gun);
 }
 
 struct Bullet {
@@ -383,13 +409,11 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     en.max_tractor_beams = 3;
 
-    en.gun_stat = *gun_default;
-    // en.gun_stat = *gun_burst;
-    // en.gun_stat = *gun_minigun;
+    add_gun(en, make_vec(-1, -0.2) * en.collider_radius, *gun_default);
+    add_gun(en, make_vec( 1, -0.2) * en.collider_radius, *gun_default);
 
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = st.cargo_capacity;
-    // TODO: this should work: ({.Rock, 10} as Item)
     add_item(en, {.GoldOre, (random01() * en.cargo_capacity/2) as uint32} as Item);
 
     if st == *ship_types[5] {
@@ -400,7 +424,7 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
         turret.depth = -0.01;
         turret.pivot = {0, -7};
         turret.local_pos = {0, -19};
-        turret.gun_stat = *gun_default;
+        add_gun(turret, make_vec(0, 1) * turret.collider_radius, *gun_default);
     }
 
     if st == *ship_types[9] {
@@ -535,14 +559,6 @@ void thrust(Entity* en, vec2 dir) {
 
     let dt = deltatime();
 
-    // let force = dir * en.mass * 80; // * 80_000; // N
-    // let imp = force * dt;     // Ns
-
-    // // TODO: hack!
-    // if en.entity_type == EntityType.missile  imp = imp * 6;
-
-    // // apply_impulse(en, imp);
-
     vec2 target_vel = dir*en.max_speed;
     en.vel = move(en.vel, target_vel, en.max_acc*dt);
 
@@ -638,26 +654,33 @@ void draw_aim(vec2 pos, dir) {
         color_factor, color_additive, color_outline);
 }
 
-void fire_gun(Entity* en, Gun* gun, Gun_Stat* stat, vec2 target, offset) {
-    if gun.volley_shots >= stat.volley_count return;
+void draw_aim(Entity* en, Gun* gun, vec2 target) {
+    let world_pos = local2world(en.tr, gun.local_pos);
+    let dir = calc_gun_aim_dir(en, gun.stat, world_pos, target);
+    draw_aim(world_pos, dir);
+}
+
+
+void fire_gun(Entity* en, Gun* gun, vec2 target) {
+    if gun.volley_shots >= gun.stat.volley_count return;
     if gun.projectile_cooldown > 0 return;
 
-    let gun_pos = local2world(en.tr, offset);
-    vec2 dir = calc_gun_aim_dir(en, stat, gun_pos, target);
+    let gun_pos = local2world(en.tr, gun.local_pos);
+    vec2 dir = calc_gun_aim_dir(en, gun.stat, gun_pos, target);
 
     Bullet bullet = {};
     bullet.emitter = en;
     bullet.pos = gun_pos;
-    bullet.vel = en.vel + dir * stat.muzzle_speed + random_vec2(stat.spread);
+    bullet.vel = en.vel + dir * gun.stat.muzzle_speed + random_vec2(gun.stat.spread);
     bullet.team_id = en.team_id;
-    bullet.damage = stat.hp_damage;
+    bullet.damage = gun.stat.hp_damage;
     list_add(*bullets, *bullet);
 
     audio_play(*wav_hallo, make_vec(bullet.pos, 0));
 
     gun.volley_shots++;
-    gun.volley_cooldown = stat.volley_cooldown;
-    gun.projectile_cooldown = stat.projectile_cooldown;
+    gun.volley_cooldown = gun.stat.volley_cooldown;
+    gun.projectile_cooldown = gun.stat.projectile_cooldown;
 
 
     uint32 num_p = 10;
@@ -785,19 +808,24 @@ void update_entity(Entity* en) {
     void update_gun(Gun* gun, float32 dt) {
         if gun.projectile_cooldown > 0  gun.projectile_cooldown -= dt;
 
-        // if gun.volley_shots != 0 {
-            if gun.volley_cooldown > 0  gun.volley_cooldown -= dt;
-            else gun.volley_shots = 0;
-        // }
+        if gun.volley_cooldown > 0  gun.volley_cooldown -= dt;
+        else gun.volley_shots = 0;
     }
 
-    update_gun(*en.gun1, dt);
-    update_gun(*en.gun2, dt);
+    for 0 .. list_length(en.guns) {
+        Gun* gun = *en.guns[it];
+        update_gun(gun, dt);
+    }
 
-    // if en.volley_shots != 0 {
-    //     if en.volley_cooldown > 0  en.volley_cooldown -= dt;
-    //     else en.volley_shots = 0;
-    // }
+    if en.flags & .fire_guns {
+        for 0 .. list_length(en.guns) {
+            Gun* gun = *en.guns[it];
+            fire_gun(en, gun, en.target_pos);
+        }
+
+        en.flags &= ~.fire_guns;
+    }
+
 
 
     if en.cooldown > 0  en.cooldown -= dt;
@@ -905,10 +933,10 @@ void update_entity(Entity* en) {
         } break;
 
         case .turret: {
-            if en.parent and en.parent.target {
-                let target_pos = en.parent.target.tr.pos;
-                turn_to(en, target_pos);
-                fire_gun(en, *en.gun1, en.gun_stat, target_pos, make_vec(0, 1) * en.collider_radius);
+            if en.parent {
+                en.target_pos = en.parent.target_pos;
+                en.tr.rot = vec2_to_angle(en.target_pos - en.tr.pos);
+                set_flags(en, Entity_Flags.fire_guns, en.parent.flags & .fire_guns);
             }
         } break;
 
@@ -1173,9 +1201,11 @@ Entity*[] all_entities_in_radius(vec2 pos, Entity* self, float32 radius, int64 m
         }
     }
 
-    Entity*[] result = {}; // TODO: Entity[..] should implicitly convert to Entity[]
-    result.data = list;
-    result.length = list_length(list);
+    Entity*[] result = as_span(list);
+
+    // Entity*[] result = {}; // TODO: Entity[..] should implicitly convert to Entity[]
+    // result.data = list;
+    // result.length = list_length(list);
     return result;
 }
 
@@ -1236,21 +1266,17 @@ void update_world() {
         turn_to(player, target);
         if !key_down(Key.left_shift) {
             let en = player;
-            let offset = make_vec(1, -0.2) * en.collider_radius;
+            en.target_pos = target;
 
             if mouse_down(MouseButton.Left) {
-                fire_gun(en, *en.gun1, en.gun_stat, target, offset);
-                fire_gun(en, *en.gun2, en.gun_stat, target, offset*{-1, 1});
+                en.flags |= .fire_guns;
+            } else {
+                en.flags &= ~.fire_guns;
             }
 
-            void draw_gun_aim(Entity* en, vec2 offset, target) {
-                let gun_pos = local2world(en.tr, offset);
-                vec2 dir = calc_gun_aim_dir(en, en.gun_stat, gun_pos, target);
-                draw_aim(gun_pos, dir);
+            for 0 .. list_length(en.guns) {
+                draw_aim(en, *en.guns[it], target);
             }
-
-            draw_gun_aim(en, offset, target);
-            draw_gun_aim(en, offset*{-1, 1}, target);
         }
 
         if mouse_pressed(Right_Mouse) {

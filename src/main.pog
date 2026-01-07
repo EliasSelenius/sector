@@ -13,6 +13,7 @@ include "src/agent.pog";
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O3
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer
 // ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -fsanitize=address -fno-omit-frame-pointer -lkernel32 -lgdi32 -luser32 -lruntimeobject -lwinmm -ld3d11 -ldxguid -ld3dcompiler -lshlwapi -lole32 -lshcore -lavrt -lksuser -ldbghelp
+// ..\plang\bin\plang.exe src\main.pog cflags -lglfw3dll -O0 -g -lkernel32 -lgdi32 -luser32 -lruntimeobject -lwinmm -ld3d11 -ldxguid -ld3dcompiler -lshlwapi -lole32 -lshcore -lavrt -lksuser -ldbghelp
 
 /*
     Civilization is flourishing in an asteroid field of abundant riches, and yet conflict is prevalent
@@ -57,11 +58,7 @@ include "src/agent.pog";
 
     - bounty system (makes hordes of enemies spawn to attack you)
 
-    - draw gun aim direction
-
 Priority:
-
-    - entity.pivot
 
     - improve AI
         - detection range
@@ -215,7 +212,7 @@ Transform2D camera_map = {scale = 6000};
 Transform2D camera_to_dispatch;
 
 RenderLayer world_ui_layer;
-RenderLayer ui_layer;
+RenderLayer static_ui_layer;
 
 void on_event(AppEvent event, AppEventData data) switch event {
 
@@ -305,8 +302,8 @@ void main() {
     init_chunks();
 
     world_ui_layer = create_layer();
-    ui_layer = create_layer();
-    immediate_layer = *ui_layer;
+    static_ui_layer = create_layer();
+    immediate_layer = *static_ui_layer;
 
     {
         print("sizeof Entity = ", sizeof Entity, " bytes.\n");
@@ -357,7 +354,7 @@ void main() {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         dispatch_sprites(camera_to_dispatch);
         dispatch_layer(*world_ui_layer, camera_to_dispatch);
-        dispatch_layer(*ui_layer, {scale=1} as Transform2D);
+        dispatch_layer(*static_ui_layer, {scale=1} as Transform2D);
 
         if key_pressed(GLFW_KEY_ESCAPE) break;
         this_frame = {};
@@ -437,7 +434,7 @@ SpaceshipType* ship_selection_menu() {
 void draw_menu() {
 
     let old_tab = menu_tab;
-    draw_tabs(*ui_layer);
+    draw_tabs(*static_ui_layer);
     if old_tab != menu_tab and menu_tab == .Map {
         camera_map = camera_world;
         camera_map.scale *= 2;
@@ -445,6 +442,9 @@ void draw_menu() {
 
     switch (menu_tab) {
     case .Ships: {
+        float32 h = 0.07*1.5;
+        draw_credits(app.top_left + {h, -h}, h);
+
         let st = ship_selection_menu();
         if st {
             if player_credits >= st.build_cost {

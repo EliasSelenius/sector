@@ -85,18 +85,19 @@ void agent_goto(Entity* en, vec2 pos) {
 void agent_attack(Entity* en, target) {
     let d = circle_dist(en, target);
 
-    float32 seconds = d / en.gun_stat.muzzle_speed;
-    let target_pos = target.tr.pos + target.vel * seconds;
+    // float32 seconds = d / en.gun_stat.muzzle_speed;
+    // let target_pos = target.tr.pos + target.vel * seconds;
 
     // Transform2D tr = {};
     // tr.pos = target_pos;
     // tr.scale = 100.0 / get_collider_radius(sprite_shockwave);
     // draw_sprite(tr, 0, sprite_shockwave, vec4_one, vec4_zero, vec4_zero);
 
-    turn_to(en, target_pos);
-    // look_at(*en.tr, target_pos);
+    en.target_pos = target.tr.pos;
+    turn_to(en, en.target_pos);
 
-    if d < 15*16  fire_gun(en, *en.gun1, en.gun_stat, target_pos, make_vec(0, 1) * en.collider_radius);
+    set_flags(en, Entity_Flags.fire_guns, d < 240);
+
 
     float32 min_dist = 80;
     float32 max_dist = 200;
