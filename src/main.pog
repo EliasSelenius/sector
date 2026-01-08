@@ -209,6 +209,7 @@ Menu_Tabs menu_tab = .Ships;
 
 Transform2D camera_world = {{0,0}, 0, 10};
 Transform2D camera_map = {scale = 6000};
+Transform2D camera_ship_selection = {scale=200};
 Transform2D camera_to_dispatch;
 
 RenderLayer world_ui_layer;
@@ -374,11 +375,10 @@ SpaceshipType* ship_selection_menu() {
 
     let l = *world_ui_layer;
 
-    static Transform2D menu_cam_tr = {scale=200};
-    mouse_drag_control(*menu_cam_tr);
-    camera_to_dispatch = menu_cam_tr;
+    mouse_drag_control(*camera_ship_selection);
+    camera_to_dispatch = camera_ship_selection;
 
-    vec2 mouse_world_pos = get_mouse_world_coord(menu_cam_tr);
+    vec2 mouse_world_pos = get_mouse_world_coord(camera_ship_selection);
 
     float32 horz_pos = -1;
     for 0 .. ship_types.length {
@@ -434,7 +434,7 @@ SpaceshipType* ship_selection_menu() {
 void draw_menu() {
 
     let old_tab = menu_tab;
-    draw_tabs(*static_ui_layer);
+    draw_tabs();
     if old_tab != menu_tab and menu_tab == .Map {
         camera_map = camera_world;
         camera_map.scale *= 2;
@@ -457,7 +457,9 @@ void draw_menu() {
         }
     } break;
     case .Cargo: break;
-    case .Tech: break;
+    case .Tech: {
+        draw_ship_outfitter();
+    } break;
     case .Map: {
 
         mouse_drag_control(*camera_map);
@@ -522,46 +524,86 @@ void draw_menu() {
                 color_fac = {v,v,v,1};
             }
 
-            DrawBuffers db = en.entity_type == .debris ? db_debris[en.level] : draw2d_renderer.quad_db;
-            draw_sprite(db, en.tr, en.depth, en.sprite, color_fac, color_add, color_out);
+            draw_entity(en, en.tr, color_fac, color_add, color_out);
         }
     } break;
     case .Esc: break;
     }
 }
 
-void draw_tabs(RenderLayer* l) {
+void draw_tabs() {
+    float32 px = 2.0 / app.window_height;
+
+    // Made static for debugger access
+    static Color color_menu_tab_back = White;
+    static Color color_menu_tab_text = Black;
 
     if key_pressed('A') menu_tab = (menu_tab-1) % Menu_Tabs.Count;
     if key_pressed('D') menu_tab = (menu_tab+1) % Menu_Tabs.Count;
 
-    float32 tab_width = 2.0 / tab_names.length;
-    float32 tab_height = 0.1;
-    vec2 size = {tab_width, tab_height};
+    UI_Rect rect_tabs = {};
+    rect_tabs.size = {2, 0.1};
+    rect_tabs.center = {0, 1 - rect_tabs.size.y};
 
-    vec2 pos = {-1, 1 - tab_height};
-    for 0 .. tab_names.length {
+    uint32 tab_count = tab_names.length;
+    for 0 .. tab_count {
+        UI_Rect rect_tab = div_x(rect_tabs, tab_count, it);
 
-
-        let p = pos + make_vec((it as float32 + 0.5) * tab_width, 0);
-        let s = size * make_vec(0.9, 1);
-        UI_Rect rect = {p,s};
-
-        Color color = White;
-        if hover(rect, Input.mouse_pos) {
+        Color color = color_menu_tab_back;
+        if hover(rect_tab, Input.mouse_pos) {
             color = Gray;
             if mouse_pressed(Left_Mouse) menu_tab = it;
         }
 
-        if it == menu_tab {
-            color = Blue;
-        }
+        if it == menu_tab  color = Blue;
+
+        draw_rect(pad(rect_tab, 1*px, 0), color);
 
         let name = make_string(tab_names[it]);
+        float32 glyph_height = rect_tab.size.y;
 
-        draw_rect(l, p, s, color);
-        draw_text(l, center_text(rect, s.y, name), s.y, name, Black);
-        // pos.x += 0.2;
+        draw_text_centered(rect_tab, glyph_height, name, color_menu_tab_text);
+    }
+}
+
+void draw_ship_outfitter() {
+    RenderLayer* l = *world_ui_layer;
+    camera_to_dispatch = {scale=50};
+
+    Entity* en = player;
+    if en == null return;
+
+    vec4 color_fac = vec4_one;
+    vec4 color_add = vec4_zero;
+    vec4 color_out = vec4_zero;
+
+    Transform2D tr = {scale = 1};
+    draw_entity(en, tr, color_fac, color_add, color_out);
+
+    let mouse_pos = get_mouse_world_coord(camera_to_dispatch);
+    let local_pos = round(world2local(tr, mouse_pos));
+
+    UI_Rect rect_mouse = {size={1,1}, center=local_pos};
+    draw_rect(l, rect_mouse, Green);
+
+    for 0 .. list_length(en.guns) {
+        Gun* gun = *en.guns[it];
+        let gun_pos = local2world(tr, gun.local_pos);
+        UI_Rect rect = {size={1.5,1.5}, center=gun_pos};
+
+        float32 s = 1.0;
+        if hover(rect, mouse_pos) {
+            s = 1.3;
+            if mouse_pressed(MouseButton.Right) {
+                list_remove(en.guns, gun);
+            }
+        }
+
+        draw_rect(l, scale(rect, s,s), Red);
+    }
+
+    if mouse_pressed(MouseButton.Left) {
+        add_gun(en, local_pos, *gun_default);
     }
 }
 

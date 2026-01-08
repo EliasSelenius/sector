@@ -629,9 +629,7 @@ vec2 calc_gun_aim_dir(Entity* en, Gun_Stat* stat, vec2 gun_pos, target) {
     let forw = forward_vec(en.tr);
     float32 a = sign_angle(dir, forw);
     float32 ha = stat.max_angle_of_rotation/2.0;
-    a = clamp(a, -ha, ha);
-    dir = rotate_vec(forw, a);
-    return dir;
+    return rotate_vec(forw, clamp(a, -ha, ha));
 }
 
 void draw_aim(vec2 pos, dir) {
@@ -1078,28 +1076,46 @@ void update_entity(Entity* en) {
         }
     }
 
-    DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
-    let tex = en.sprite.tex;
-
-    Draw2D_Instance_Data ins_data = {};
-    ins_data.pos = make_vec(local2world(en.tr, en.pivot*-1), en.depth);
-    ins_data.rot = en.tr.rot;
-    ins_data.scale   = en.sprite.uv_scale * make_vec(tex.width, tex.height) * en.tr.scale;
-    ins_data.uv_offset = en.sprite.uv_offset;
-    ins_data.uv_scale  = en.sprite.uv_scale;
-    ins_data.color_factor   = en.color_factor;
-    ins_data.color_additive = en.color_additive;
-    ins_data.color_outline  = en.color_outline;
-
-    // draw_sprite(db, en.tr, en.depth, en.sprite, en.color_factor, en.color_additive, en.color_outline);
-
-    draw_texture(db, tex, ins_data, en.sprite.is_semi_transparent);
+    draw_entity(en);
 
     en.color_additive = exp_decay(en.color_additive, vec4_zero, 10, dt);
     en.color_outline = exp_decay(en.color_outline, vec4_zero, 1, dt);
     en.color_outline.w = exp_decay(en.color_outline.w, 0, 100, dt);
 
     if is_dead(en) on_destroy(en);
+}
+
+void draw_entity(Entity* en) draw_entity(en, en.tr, en.color_factor, en.color_additive, en.color_outline);
+void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_out) {
+    DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
+    let tex = en.sprite.tex;
+
+    Draw2D_Instance_Data ins_data = {};
+    ins_data.pos = make_vec(local2world(tr, en.pivot*-1), en.depth);
+    ins_data.rot = tr.rot;
+    ins_data.scale   = en.sprite.uv_scale * make_vec(tex.width, tex.height) * tr.scale;
+    ins_data.uv_offset = en.sprite.uv_offset;
+    ins_data.uv_scale  = en.sprite.uv_scale;
+    ins_data.color_factor   = color_fac;
+    ins_data.color_additive = color_add;
+    ins_data.color_outline  = color_out;
+
+    draw_texture(db, tex, ins_data, en.sprite.is_semi_transparent);
+
+    for 0 .. list_length(en.guns) {
+        Gun* gun = *en.guns[it];
+
+        Sprite sprite = sprite_projectile;
+        ivec2 sprite_size = get_sprite_pixel_size(sprite);
+
+        Transform2D gun_tr = {scale=1};
+        gun_tr.pos = local2world(tr, gun.local_pos);
+        gun_tr.rot = vec2_to_angle(calc_gun_aim_dir(en, gun.stat, gun_tr.pos, en.target_pos));
+
+        gun_tr.pos = local2world(gun_tr, make_vec(0, sprite_size.y/2.0));
+
+        draw_sprite(gun_tr, 0.0, sprite);
+    }
 }
 
 bool default_col_response(Entity* en, Bullet* bullet) {
