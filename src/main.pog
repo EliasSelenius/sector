@@ -108,11 +108,13 @@ Sprite[sprites_asteroids_count] sprites_asteroids;
 Sprite[2] sprites_items;
 
 Sprite sprite_turret;
+Sprite sprite_gun;
 Sprite sprite_spacestation;
 
 Texture2D projectile;
 Texture2D particle;
 
+Sprite sprite_projectile2;
 Sprite sprite_projectile;
 Sprite sprite_particle;
 Sprite sprite_shockwave;
@@ -193,10 +195,14 @@ void loadassets() {
         sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
+    sprite_gun = get_sprite(*spritesheet_items, 2);
+    sprite_projectile2 = get_sprite(*spritesheet_items, 3);
+
     sprite_turret = get_sprite(*spritesheet, 10);
     sprite_spacestation = get_sprite(*spritesheet, 16);
 
     sprite_projectile.is_semi_transparent = true;
+    sprite_projectile2.is_semi_transparent = true;
     sprite_shockwave.is_semi_transparent = true;
     sprite_particle.is_semi_transparent = true;
     sprite_cloud.is_semi_transparent = true;
@@ -210,12 +216,13 @@ Menu_Tabs menu_tab = .Ships;
 Transform2D camera_world = {{0,0}, 0, 10};
 Transform2D camera_map = {scale = 6000};
 Transform2D camera_ship_selection = {scale=200};
+Transform2D camera_tech_tree = {scale=100};
 Transform2D camera_to_dispatch;
 
 RenderLayer world_ui_layer;
 RenderLayer static_ui_layer;
 
-void on_event(AppEvent event, AppEventData data) switch event {
+void on_event(AppEvent event) switch event.kind {
 
 }
 
@@ -353,6 +360,7 @@ void main() {
 
         glDepthMask(true);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        set_face_render_mode(Poly.Fill, Poly.Fill); // for sprites that have been flipped around with scale.x = -1
         dispatch_sprites(camera_to_dispatch);
         dispatch_layer(*world_ui_layer, camera_to_dispatch);
         dispatch_layer(*static_ui_layer, {scale=1} as Transform2D);
@@ -456,7 +464,9 @@ void draw_menu() {
             }
         }
     } break;
-    case .Cargo: break;
+    case .Cargo: {
+        draw_tri_grid();
+    } break;
     case .Tech: {
         draw_ship_outfitter();
     } break;
@@ -566,6 +576,74 @@ void draw_tabs() {
     }
 }
 
+vec2 tri_grid1(vec2 p) {
+    float32 a = cosf(30*deg2rad);
+    float32 shift = 0.5*zigzag(p.y);
+    return {p.x + shift, p.y * a};
+}
+
+vec2 tri_grid2(vec2 p) {
+    float32 a = cosf(30*deg2rad);
+    float32 shift = 0.5*zigzag(p.x);
+    return {p.x * a, p.y + shift};
+}
+
+vec2 tri_grid2_inv(vec2 p) {
+    float32 a = cosf(30*deg2rad);
+    float32 shift = 0.5*zigzag(p.x / a);
+    return {p.x / a, p.y - shift};
+}
+
+float32 zigzag(float32 a) {
+    return abs(fract(a/2)*2 - 1);
+}
+
+struct Techtree_Node {
+    ivec2 ipos;
+}
+
+Techtree_Node[] techtree = {
+    {ipos={0,0}},
+    {ipos={1,0}},
+    {ipos={2,0}},
+    {ipos={1,1}},
+    {ipos={2,3}}
+};
+
+
+void draw_tri_grid() {
+    RenderLayer* l = *world_ui_layer;
+
+    mouse_drag_control(*camera_tech_tree);
+    camera_to_dispatch = camera_tech_tree;
+
+    let mouse_pos = get_mouse_world_coord(camera_to_dispatch);
+
+    float32 px = 2.0 / app.window_height;
+    px *= camera_tech_tree.scale;
+
+    for iy: 0 .. 100 for ix: 0 .. 100 {
+        vec2 p = {ix, iy};
+        p = tri_grid2(p);
+        draw_rect(l, p, make_vec2(px*2.0), White);
+    }
+
+    draw_rect(l, mouse_pos, make_vec2(px*2.0), Red);
+
+    vec2 tri = tri_grid2_inv(mouse_pos);
+    vec2 tri_i = floor(tri);
+    vec2 tri_f = tri - tri_i;
+
+    tri_i.x *= 2;
+    if tri_f.x > tri_f.y  tri_i.x += 1;
+
+    draw_rect(l, tri_grid2(tri_i), make_vec2(px*2.0), Green);
+
+    for 0 .. techtree.length {
+        Techtree_Node* node = *techtree[it];
+    }
+}
+
 void draw_ship_outfitter() {
     RenderLayer* l = *world_ui_layer;
     camera_to_dispatch = {scale=50};
@@ -588,7 +666,7 @@ void draw_ship_outfitter() {
 
     for 0 .. list_length(en.guns) {
         Gun* gun = *en.guns[it];
-        let gun_pos = local2world(tr, gun.local_pos);
+        let gun_pos = local2world(tr, gun.local_tr.pos);
         UI_Rect rect = {size={1.5,1.5}, center=gun_pos};
 
         float32 s = 1.0;

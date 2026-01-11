@@ -293,7 +293,7 @@ Gun_Stat gun_default = {
     volley_cooldown = 1,
     projectile_cooldown = 0.1,
     hp_damage = 0.6,
-    max_angle_of_rotation = Pi/2.0,
+    max_angle_of_rotation = Pi/4.0,
     muzzle_speed = 800,
     spread = 48
 };
@@ -321,7 +321,7 @@ Gun_Stat gun_minigun = {
 struct Gun {
     Gun_Stat* stat;
 
-    vec2 local_pos;
+    Transform2D local_tr;
 
     uint32 volley_shots;
     float32 volley_cooldown;
@@ -333,7 +333,8 @@ void add_gun(Entity* en, vec2 offset, Gun_Stat* stat) {
 
     Gun gun = {};
     gun.stat = stat;
-    gun.local_pos = offset;
+    gun.local_tr = {scale=1};
+    gun.local_tr.pos = offset;
 
     list_add(*en.guns, *gun);
 }
@@ -409,8 +410,8 @@ Entity* spawn_ship(vec2 pos, SpaceshipType* st, uint32 team_id) {
 
     en.max_tractor_beams = 3;
 
-    add_gun(en, make_vec(-1, -0.2) * en.collider_radius, *gun_default);
-    add_gun(en, make_vec( 1, -0.2) * en.collider_radius, *gun_default);
+    add_gun(en, make_vec(-10, -2), *gun_default);
+    add_gun(en, make_vec( 10, -2), *gun_default);
 
     en.tr.rot = random(global_seed++) * Pi;
     en.cargo_capacity = st.cargo_capacity;
@@ -653,7 +654,7 @@ void draw_aim(vec2 pos, dir) {
 }
 
 void draw_aim(Entity* en, Gun* gun, vec2 target) {
-    let world_pos = local2world(en.tr, gun.local_pos);
+    let world_pos = local2world(en.tr, gun.local_tr.pos);
     let dir = calc_gun_aim_dir(en, gun.stat, world_pos, target);
     draw_aim(world_pos, dir);
 }
@@ -663,12 +664,14 @@ void fire_gun(Entity* en, Gun* gun, vec2 target) {
     if gun.volley_shots >= gun.stat.volley_count return;
     if gun.projectile_cooldown > 0 return;
 
-    let gun_pos = local2world(en.tr, gun.local_pos);
-    vec2 dir = calc_gun_aim_dir(en, gun.stat, gun_pos, target);
+    vec2 offset = { 0, get_sprite_pixel_size(sprite_gun).y };
+    let world_tr = local2world(en.tr, gun.local_tr);
+    let emit_pos = local2world(world_tr, offset);
+    vec2 dir = forward_vec(world_tr);
 
     Bullet bullet = {};
     bullet.emitter = en;
-    bullet.pos = gun_pos;
+    bullet.pos = emit_pos;
     bullet.vel = en.vel + dir * gun.stat.muzzle_speed + random_vec2(gun.stat.spread);
     bullet.team_id = en.team_id;
     bullet.damage = gun.stat.hp_damage;
@@ -803,16 +806,21 @@ void update_entity(Entity* en) {
 
     // en.ang_vel *= 0.99;
 
-    void update_gun(Gun* gun, float32 dt) {
+    void update_gun(Entity* en, Gun* gun, float32 dt) {
         if gun.projectile_cooldown > 0  gun.projectile_cooldown -= dt;
-
         if gun.volley_cooldown > 0  gun.volley_cooldown -= dt;
         else gun.volley_shots = 0;
+
+        let local_target_pos = world2local(en.tr, en.target_pos);
+        let diff = local_target_pos - gun.local_tr.pos;
+        float32 a = vec2_to_angle(diff);
+        float32 ha = gun.stat.max_angle_of_rotation/2.0;
+        gun.local_tr.rot = clamp(a, -ha, ha);
     }
 
     for 0 .. list_length(en.guns) {
         Gun* gun = *en.guns[it];
-        update_gun(gun, dt);
+        update_gun(en, gun, dt);
     }
 
     if en.flags & .fire_guns {
@@ -1085,6 +1093,19 @@ void update_entity(Entity* en) {
     if is_dead(en) on_destroy(en);
 }
 
+Draw2D_Instance_Data make_ins_data(Sprite sp, Transform2D tr, float32 depth, vec2 pivot, scale) {
+    Draw2D_Instance_Data ins = {};
+    ins.pos = make_vec(local2world(tr, pivot*-1), depth);
+    ins.rot = tr.rot;
+    ins.scale     = sp.uv_scale * make_vec(sp.tex.width, sp.tex.height) * tr.scale * scale;
+    ins.uv_offset = sp.uv_offset;
+    ins.uv_scale  = sp.uv_scale;
+    ins.color_factor   = vec4_one;
+    ins.color_additive = vec4_zero;
+    ins.color_outline  = vec4_zero;
+    return ins;
+}
+
 void draw_entity(Entity* en) draw_entity(en, en.tr, en.color_factor, en.color_additive, en.color_outline);
 void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_out) {
     DrawBuffers db = en.entity_type == EntityType.debris ? db_debris[en.level] : draw2d_renderer.quad_db;
@@ -1100,21 +1121,24 @@ void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_ou
     ins_data.color_additive = color_add;
     ins_data.color_outline  = color_out;
 
-    draw_texture(db, tex, ins_data, en.sprite.is_semi_transparent);
+    Draw2D_Batch* batch = *draw2d_renderer.batch;
+    if en.sprite.is_semi_transparent
+        batch = *draw2d_renderer.batch_semi_transparent;
+
+    draw_texture(batch, db, tex.gl_handle, ins_data);
 
     for 0 .. list_length(en.guns) {
         Gun* gun = *en.guns[it];
 
-        Sprite sprite = sprite_projectile;
+        Sprite sprite = sprite_gun;
         ivec2 sprite_size = get_sprite_pixel_size(sprite);
 
-        Transform2D gun_tr = {scale=1};
-        gun_tr.pos = local2world(tr, gun.local_pos);
-        gun_tr.rot = vec2_to_angle(calc_gun_aim_dir(en, gun.stat, gun_tr.pos, en.target_pos));
+        let gun_tr = local2world(tr, gun.local_tr);
 
-        gun_tr.pos = local2world(gun_tr, make_vec(0, sprite_size.y/2.0));
+        let pivot = make_vec(0, -sprite_size.y/2.0);
+        let ins = make_ins_data(sprite, gun_tr, en.depth - 0.00001, pivot, make_vec(-sign(gun.local_tr.pos.x),1));
 
-        draw_sprite(gun_tr, 0.0, sprite);
+        draw_texture(batch, draw2d_renderer.quad_db, sprite.tex.gl_handle, ins);
     }
 }
 
@@ -1369,7 +1393,7 @@ void update_world() {
         vec4 color = lerp(bullet.life_time / max_bullet_lifetime, color_orange, vec4_one*0.03);
 
         Transform2D tr = { bullet.pos, vec2_to_angle(bullet.vel), 1 };
-        draw_sprite(tr, 0, sprite_projectile, vec4_one, vec4_zero, vec4_zero);
+        draw_sprite(tr, 0, sprite_projectile2, vec4_one, vec4_zero, vec4_zero);
 
         vec2 pos_start = bullet.pos;
         vec2 pos_end   = bullet.pos + bullet.vel * dt;
@@ -1380,7 +1404,7 @@ void update_world() {
 
             vec2    pos = lerp(t, pos_start, pos_end);
             vec2    vel = random_vec2(10);
-            float32 size = 3;
+            float32 size = 2;
             float32 rot = random(global_seed++) * Pi;
             float32 ang_vel = 1;
             float32 life_time = 0.15 + dt*t;

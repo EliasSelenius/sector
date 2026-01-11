@@ -24,3 +24,4 @@ output.rdi
 *.pdb
 shader_debug_log_*.txt
 save.bin
+output.trace
