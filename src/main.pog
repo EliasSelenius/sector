@@ -85,6 +85,19 @@ idea:
 
 */
 
+
+// struct SpriteImageTexture2D {
+//     Color* pixels;
+//     uint32 width, height;
+
+//     uint64 bindless_handle;
+//     uint32 gl_tex_handle;
+
+//     vec2 uv_offset, uv_scale;
+// }
+
+
+
 vec2 get_mouse_world_coord(Transform2D cam_tr) {
     float32 x = mouse_x as float32 / app.window_width * 2 - 1;
     float32 y = -(mouse_y as float32 / app.window_height * 2 - 1);
@@ -117,9 +130,11 @@ Texture2D particle;
 Sprite sprite_projectile2;
 Sprite sprite_projectile;
 Sprite sprite_particle;
+Sprite sprite_star;
 Sprite sprite_shockwave;
 Sprite sprite_cloud;
 Sprite sprite_ftl_test;
+Sprite sprite_cracks;
 
 Wav_File wav_hallo;
 Wav_File wav_debris_break;
@@ -150,6 +165,7 @@ void loadassets() {
     Sprite load_sprite(char* file) return make_sprite(load_texture2D(file));
     sprite_projectile = make_sprite(projectile);
     sprite_particle = make_sprite(particle);
+    sprite_star = load_sprite("assets/star.bmp");
     sprite_shockwave = load_sprite("assets/shockwave.bmp");
     sprite_cloud = load_sprite("assets/cloud.bmp");
     sprite_ftl_test = load_sprite("assets/ftl_test.bmp");
@@ -197,6 +213,7 @@ void loadassets() {
 
     sprite_gun = get_sprite(*spritesheet_items, 2);
     sprite_projectile2 = get_sprite(*spritesheet_items, 3);
+    sprite_cracks = get_sprite(*spritesheet_items, 4);
 
     sprite_turret = get_sprite(*spritesheet, 10);
     sprite_spacestation = get_sprite(*spritesheet, 16);
@@ -206,6 +223,7 @@ void loadassets() {
     sprite_shockwave.is_semi_transparent = true;
     sprite_particle.is_semi_transparent = true;
     sprite_cloud.is_semi_transparent = true;
+    sprite_star.is_semi_transparent = true;
 }
 
 enum Menu_Tabs { Ships; Cargo; Tech; Map; Esc; Count; }
@@ -221,6 +239,8 @@ Transform2D camera_to_dispatch;
 
 RenderLayer world_ui_layer;
 RenderLayer static_ui_layer;
+
+Draw2D_Batch batch_static_ui;
 
 void on_event(AppEvent event) switch event.kind {
 
@@ -365,6 +385,11 @@ void main() {
         dispatch_layer(*world_ui_layer, camera_to_dispatch);
         dispatch_layer(*static_ui_layer, {scale=1} as Transform2D);
 
+        use(*default2d_shader);
+        enable_alpha_blending();
+        dispatch_sprites(*batch_static_ui, {scale=1} as Transform2D);
+
+
         if key_pressed(GLFW_KEY_ESCAPE) break;
         this_frame = {};
     }
@@ -377,6 +402,20 @@ struct ThisFrameData {
     bool target_took_damage;
 }
 
+
+void draw_sprite_ui(vec2 pos, scale, Sprite sp) {
+    Draw2D_Instance_Data ins = {};
+    ins.pos = make_vec(pos, 0);
+    ins.rot = 0;
+    ins.scale   = sp.uv_scale * make_vec(sp.tex.width, sp.tex.height) * scale;
+    ins.uv_offset = sp.uv_offset;
+    ins.uv_scale  = sp.uv_scale;
+    ins.color_factor   = vec4_one;
+    ins.color_additive = vec4_zero;
+    ins.color_outline  = vec4_zero;
+
+    draw_texture(*batch_static_ui, draw2d_renderer.quad_db, sp.tex.gl_handle, ins);
+}
 
 SpaceshipType* ship_selection_menu() {
     SpaceshipType* result = null;
@@ -816,11 +855,17 @@ void draw_gui() {
     {
         uint32 fleet_count = list_length(player_fleet);
         UI_Rect rect_fleet = child(rect_window, -1,0,   100*px, fleet_count*50*px);
-        draw_rect(rect_fleet, opacity(Black, 0.6));
+        // draw_rect(rect_fleet, opacity(Black, 0.6));
         for 0 .. fleet_count {
             let en = player_fleet[it];
             UI_Rect rect_ship = div_y(rect_fleet, fleet_count, it);
             draw_rect(pad(rect_ship, px), opacity(White, 0.4));
+
+            ivec2 pxs = get_sprite_pixel_size(en.sprite);
+            UI_Rect rect_icon = rect_ship;
+            vec2 size = make_vec2(1.0 / pxs.y) * rect_ship.size.y;
+
+            draw_sprite_ui(rect_icon.center, size, en.sprite);
         }
     }
 

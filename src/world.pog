@@ -290,8 +290,8 @@ struct Gun_Stat {
 
 Gun_Stat gun_default = {
     volley_count = 3,
-    volley_cooldown = 1,
-    projectile_cooldown = 0.1,
+    volley_cooldown = 0.8,
+    projectile_cooldown = 0.15,
     hp_damage = 0.6,
     max_angle_of_rotation = Pi/4.0,
     muzzle_speed = 800,
@@ -683,12 +683,25 @@ void fire_gun(Entity* en, Gun* gun, vec2 target) {
     gun.volley_cooldown = gun.stat.volley_cooldown;
     gun.projectile_cooldown = gun.stat.projectile_cooldown;
 
+    { // flash
+        static float32 gun_flash_size = 15;
+        static vec4 gun_flash_color_fac = color_to_vec4(rgba(0xFF6A00FF));
+        Sprite sp = sprite_star;
+
+        // Transform2D tr = {scale=gun_flash_size / sp.tex.width, pos=emit_pos};
+        // draw_sprite(tr, 0.0, sp, gun_flash_color_fac, vec4_zero, vec4_zero);
+
+        static float32 flash_time = 0.1;
+        let p = make_particle(emit_pos, en.vel, gun_flash_size / sp.tex.width, random(global_seed++) * Pi, 0, flash_time, gun_flash_color_fac, 0);
+        p.tex = sp.tex;
+        spawn_particle(p);
+    }
 
     uint32 num_p = 10;
     for 0 .. num_p {
 
-        vec2    p_vel = en.vel + (dir*40 + random_vec2(20)) * random01();
-        float32 size = 0.5;
+        vec2    p_vel = en.vel + (dir*100 + random_vec2(20)) * random01();
+        float32 size = 1 / 8.0;
         float32 rot = random(global_seed++) * Pi;
         float32 ang_vel = 1;
         float32 life_time = 1;
@@ -1123,6 +1136,7 @@ void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_ou
 
     Draw2D_Batch* batch = *draw2d_renderer.batch;
     if en.sprite.is_semi_transparent
+    or color_fac.w < 1.0
         batch = *draw2d_renderer.batch_semi_transparent;
 
     draw_texture(batch, db, tex.gl_handle, ins_data);
@@ -1140,6 +1154,19 @@ void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_ou
 
         draw_texture(batch, draw2d_renderer.quad_db, sprite.tex.gl_handle, ins);
     }
+
+    if false {
+        Sprite sp = sprite_cracks;
+        Draw2D_Instance_Data ins = make_ins_data(sp, en.tr, en.depth - 0.00001, en.pivot, vec2_one);
+        ins.scale = ins_data.scale;
+
+        float32 hp_prcnt = en.hp / en.max_hp;
+        float32 g = 0.8;
+        ins.color_factor = make_vec(g,g,g, sq(1.0 - hp_prcnt));
+
+        draw_texture(*draw2d_renderer.batch_semi_transparent, db, sp.tex.gl_handle, ins);
+    }
+
 }
 
 bool default_col_response(Entity* en, Bullet* bullet) {
@@ -1159,16 +1186,36 @@ bool default_col_response(Entity* en, Bullet* bullet) {
 
     vec2 ref = reflect(bullet.vel, noz(bullet.pos - en.tr.pos));
 
-    for 0 .. 10 {
-        vec2    pos = bullet.pos;
-        vec2    vel = noz(ref)*50*random01() + random_vec2(15);
-        float32 size = 0.4;
-        float32 rot = random(global_seed++) * Pi;
-        float32 ang_vel = 1;
-        float32 life_time = 1;
-        vec4    color = color_to_vec4(rgba(0xFF6A00FF));
+    // for 0 .. 10 {
+    //     vec2    pos = bullet.pos;
+    //     vec2    vel = noz(ref)*50*random01() + random_vec2(15);
+    //     float32 size = 0.4;
+    //     float32 rot = random(global_seed++) * Pi;
+    //     float32 ang_vel = 1;
+    //     float32 life_time = 1;
+    //     vec4    color = color_to_vec4(rgba(0xFF6A00FF));
 
-        Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
+    //     Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
+    //     spawn_particle(p);
+    // }
+
+    {
+        Sprite sp = sprite_shockwave;
+        ivec2 pxs = get_sprite_pixel_size(sp);
+
+        Particle p = {};
+        p.pos = bullet.pos;
+        p.tex = sp.tex;
+
+        p.size_start = 5.0 / pxs.x;
+        p.size_end = p.size_start * 2;
+
+        p.lifetime = 0.25;
+
+        p.color_start = vec4_one;
+        p.color_end = p.color_start;
+        p.color_end.w = 0;
+
         spawn_particle(p);
     }
 
@@ -1354,10 +1401,10 @@ void update_world() {
 
         // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
 
-        // static uint32 index = 0;
-        // spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
+        static uint32 index = 0;
+        spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
 
-        spawn_worm(mouse_world_pos);
+        // spawn_worm(mouse_world_pos);
     }
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
