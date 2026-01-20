@@ -460,6 +460,9 @@ Entity* spawn_asteroid(vec2 pos, uint32 asteroid_index) {
     en.team_id = team_id_asteroids;
     en.depth = 0.01;
 
+    en.max_hp = en.max_hp*2;
+    en.hp = en.max_hp;
+
     return en;
 }
 

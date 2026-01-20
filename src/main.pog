@@ -85,18 +85,16 @@ idea:
 
 */
 
+struct ImageResource {
+    Color* pixels;
+    uint32 width, height;
 
-// struct SpriteImageTexture2D {
-//     Color* pixels;
-//     uint32 width, height;
+    uint64 bindless_handle;
+    uint32 gl_tex_handle;
+}
 
-//     uint64 bindless_handle;
-//     uint32 gl_tex_handle;
-
-//     vec2 uv_offset, uv_scale;
-// }
-
-
+ImageResource[] images;
+Sprite[] sprites;
 
 vec2 get_mouse_world_coord(Transform2D cam_tr) {
     float32 x = mouse_x as float32 / app.window_width * 2 - 1;
@@ -402,17 +400,17 @@ struct ThisFrameData {
     bool target_took_damage;
 }
 
-
-void draw_sprite_ui(vec2 pos, scale, Sprite sp) {
+void draw_sprite_ui(vec2 pos, scale, Sprite sp) draw_sprite_ui(pos, scale, sp, vec4_one, vec4_zero, vec4_zero);
+void draw_sprite_ui(vec2 pos, scale, Sprite sp, vec4 color_fac, color_add, color_out) {
     Draw2D_Instance_Data ins = {};
     ins.pos = make_vec(pos, 0);
     ins.rot = 0;
     ins.scale   = sp.uv_scale * make_vec(sp.tex.width, sp.tex.height) * scale;
     ins.uv_offset = sp.uv_offset;
     ins.uv_scale  = sp.uv_scale;
-    ins.color_factor   = vec4_one;
-    ins.color_additive = vec4_zero;
-    ins.color_outline  = vec4_zero;
+    ins.color_factor   = color_fac;
+    ins.color_additive = color_add;
+    ins.color_outline  = color_out;
 
     draw_texture(*batch_static_ui, draw2d_renderer.quad_db, sp.tex.gl_handle, ins);
 }
@@ -781,15 +779,21 @@ void popup_blueprint_progress(SpaceshipType* st) {
     popup_blueprint.time = 0;
 }
 
+// struct Bar {
+//     Entity* en;
+//     float32 time;
+
+// }
 
 void draw_bar(UI_Rect rect, float32* time, float32 value, max_value, Color target_color) {
     float32 px = 2.0 / app.window_height;
 
     Color bar_bg  = rgba(0xA0_A0_A0_A0);
     Color color_flash = lerp(@time, target_color, White);
+    float32 scale_y   = lerp(@time, 1, 1.5);
 
     float32 progress = value / max_value;
-    UI_Rect rect_progress = scale_pivot(pad(rect, 4*px), progress, lerp(@time, 1, 1.5),  -1, 0);
+    UI_Rect rect_progress = scale_pivot(pad(rect, 4*px), progress, scale_y,  -1, 0);
 
     draw_rect(rect, bar_bg);
     draw_rect(rect_progress, color_flash);
@@ -905,6 +909,11 @@ void draw_gui() {
         if player.target {
             UI_Rect rect_tarbar = rect_capbar;
             rect_tarbar.center.x = -rect_tarbar.center.x;
+
+            rect_tarbar.center = world2local(camera_world, player.target.tr.pos + {0, -player.target.collider_radius});
+            rect_tarbar.size.x *= 0.5;
+            rect_tarbar.size.y *= 0.7;
+
             draw_bar(rect_tarbar, *tarbar_t, player.target.hp, player.target.max_hp, color_health);
 
             float32 h = rect_tarbar.size.y;
@@ -933,15 +942,32 @@ void draw_gui() {
     if popup_blueprint.st {
         let st = popup_blueprint.st;
         let t  = popup_blueprint.time;
+        Sprite sp = st.sprite;
 
-        float32 t0 = clamp01(t*4);
-        float32 y = lerp(t0, -0.1, 0);
-
+        float32 t0  = clamp01(t*4);
+        float32 y   = lerp(t0, -0.1, 0);
         float32 opa = lerp(t0, 0, 0.75);
 
-        vec2 pos = make_vec(0, -0.5 + y);
-        draw_rect(pos, make_vec(1, 0.5), opacity(Black, opa));
-        draw_text(pos, 0.1, concat(to_string(unlock_percent(st)), "%"), opacity(White, opa));
+        // TODO: display ship name and progress bar
+
+        UI_Rect rect = { {0, -0.5 + y}, {1, 0.5} };
+        draw_rect(rect, opacity(Black, opa));
+
+        ivec2 pxs = get_sprite_pixel_size(sp);
+        float32 height = rect.size.y * 0.7;
+        vec2 s = make_vec(pxs) / max(pxs.x, pxs.y) * height;
+        // UI_Rect rect_icon = child(rect, -1,0,  s.x,s.y);
+
+        float32 fac = 0.4;
+        vec4 color_fac = vec4_one * fac;
+        vec4 color_out = vec4_one;
+
+        draw_sprite_ui(rect.center - {rect.size.x/4.0, 0}, s / make_vec(pxs), sp, color_fac, vec4_zero, color_out);
+
+        float32 glyph_height = 0.1
+        let str = make_string(concat(to_string(unlock_percent(st)), "%"));
+        draw_text(rect.center + {rect.size.x/4.0 - text_width(str, glyph_height)/2.0, 0}, glyph_height, str, opacity(White, opa));
+
 
         popup_blueprint.time += deltatime();
         if popup_blueprint.time > 5 {
