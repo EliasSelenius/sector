@@ -277,7 +277,13 @@ struct Entity {
     Item item;
 }
 
+enum Gun_Type {
+    bullet; lazer; missile;
+}
+
 struct Gun_Stat {
+    Gun_Type gun_type;
+
     uint32  volley_count;
     float32 volley_cooldown;
     float32 projectile_cooldown;
@@ -286,9 +292,12 @@ struct Gun_Stat {
 
     float32 muzzle_speed;
     float32 spread;
+
+    SpriteID spid;
 }
 
 Gun_Stat gun_default = {
+    gun_type = .bullet,
     volley_count = 3,
     volley_cooldown = 0.8,
     projectile_cooldown = 0.15,
@@ -299,6 +308,7 @@ Gun_Stat gun_default = {
 };
 
 Gun_Stat gun_burst = {
+    gun_type = .bullet,
     volley_count = 6,
     volley_cooldown = 1.5,
     projectile_cooldown = 0.01,
@@ -309,6 +319,7 @@ Gun_Stat gun_burst = {
 };
 
 Gun_Stat gun_minigun = {
+    gun_type = .bullet,
     volley_count = 90,
     volley_cooldown = 3,
     projectile_cooldown = 0.1,
@@ -477,13 +488,15 @@ Entity* spawn_item(vec2 pos, Item item) {
 }
 
 Entity* spawn_missile(Entity* launcher) {
-    let en = spawn_entity(launcher.tr.pos, sprites_items[0]);
+    let en = spawn_entity(launcher.tr.pos, sprite_missile);
     en.entity_type = .missile;
     en.tr.rot = launcher.tr.rot;
     en.team_id = launcher.team_id;
     en.cooldown = 7;
     en.vel = launcher.vel;
     en.target = launcher.target;
+    en.max_speed = 1000;
+    en.max_acc = 20_000;
     return en;
 }
 
@@ -637,23 +650,12 @@ vec2 calc_gun_aim_dir(Entity* en, Gun_Stat* stat, vec2 gun_pos, target) {
 }
 
 void draw_aim(vec2 pos, dir) {
-
     vec4 color_factor   = {0.5,0.5,0.5,  0.1};
     vec4 color_additive = vec4_zero;
     vec4 color_outline  = vec4_zero;
 
     float32 len = 500;
-    vec2 uv_offset = vec2_zero;
-    vec2 uv_scale  = {1.0 / len, 1};
-    Transform2D tr = {scale=len};
-    tr.pos = (pos*2 + dir*len)/2.0;
-    tr.rot = sign_angle(dir, vec2_unit_y);
-
-    draw_texture(
-        draw2d_renderer.quad_db, tr, 0.0,
-        white_texture,
-        true, uv_offset, uv_scale,
-        color_factor, color_additive, color_outline);
+    draw_line_segment(pos, pos + dir*len, 1.0, 0.0, color_factor, color_additive, color_outline);
 }
 
 void draw_aim(Entity* en, Gun* gun, vec2 target) {
@@ -662,6 +664,23 @@ void draw_aim(Entity* en, Gun* gun, vec2 target) {
     draw_aim(world_pos, dir);
 }
 
+void draw_line_segment(vec2 a, b, float32 thickness, depth, vec4 color_fac, color_add, color_out) {
+    vec4 color_factor   = {0.5,0.5,0.5,  0.1};
+    vec4 color_additive = vec4_zero;
+    vec4 color_outline  = vec4_zero;
+
+    float32 len = dist(a, b);
+    vec2 uv_scale  = {thickness / len, 1};
+    Transform2D tr = {scale=len};
+    tr.pos = (a+b)/2.0;
+    tr.rot = sign_angle(b-a, vec2_unit_y);
+
+    draw_texture(
+        draw2d_renderer.quad_db, tr, depth,
+        white_texture,
+        true, vec2_zero, uv_scale,
+        color_fac, color_add, color_out);
+}
 
 void fire_gun(Entity* en, Gun* gun, vec2 target) {
     if gun.volley_shots >= gun.stat.volley_count return;
@@ -671,16 +690,33 @@ void fire_gun(Entity* en, Gun* gun, vec2 target) {
     let world_tr = local2world(en.tr, gun.local_tr);
     let emit_pos = local2world(world_tr, offset);
     vec2 dir = forward_vec(world_tr);
+    vec2 velocity = en.vel + dir * gun.stat.muzzle_speed + random_vec2(gun.stat.spread);
 
-    Bullet bullet = {};
-    bullet.emitter = en;
-    bullet.pos = emit_pos;
-    bullet.vel = en.vel + dir * gun.stat.muzzle_speed + random_vec2(gun.stat.spread);
-    bullet.team_id = en.team_id;
-    bullet.damage = gun.stat.hp_damage;
-    list_add(*bullets, *bullet);
+    switch gun.stat.gun_type {
+        case .bullet: {
+            Bullet bullet = {};
+            bullet.emitter = en;
+            bullet.pos = emit_pos;
+            bullet.vel = velocity;
+            bullet.team_id = en.team_id;
+            bullet.damage = gun.stat.hp_damage;
+            list_add(*bullets, *bullet);
+        } break;
 
-    audio_play(*wav_hallo, make_vec(bullet.pos, 0));
+        case .lazer: {
+            vec4 color_fac = vec4_one;
+            draw_line_segment(emit_pos, emit_pos + dir*200, 1.5, 0.0, color_fac, vec4_zero, vec4_zero);
+        } break;
+
+        case .missile: {
+            let m = spawn_missile(en);
+            m.tr = world_tr;
+            // m.tr.pos = emit_pos;
+            m.vel = velocity;
+        } break;
+    }
+
+    // audio_play(*wav_pew, make_vec(emit_pos, 0));
 
     gun.volley_shots++;
     gun.volley_cooldown = gun.stat.volley_cooldown;
@@ -710,7 +746,7 @@ void fire_gun(Entity* en, Gun* gun, vec2 target) {
         float32 life_time = 1;
         vec4    color = color_to_vec4(rgba(0xFF6A00FF));
 
-        let p = make_particle(bullet.pos, p_vel, size, rot, ang_vel, life_time, color, 0);
+        let p = make_particle(emit_pos, p_vel, size, rot, ang_vel, life_time, color, 0);
         spawn_particle(p);
     }
 }
@@ -972,7 +1008,7 @@ void update_entity(Entity* en) {
                 thrust(en, vec2_unit_y);
 
                 let closest = closest_entity(en, EntityType.ship);
-                if closest.team_id != en.team_id  en.target = closest;
+                if closest if closest.team_id != en.team_id  en.target = closest;
             }
 
             let inter_en = first_intersecting_entity(en, EntityType.ship);
@@ -1157,19 +1193,6 @@ void draw_entity(Entity* en, Transform2D tr, vec4 color_fac, color_add, color_ou
 
         draw_texture(batch, draw2d_renderer.quad_db, sprite.tex.gl_handle, ins);
     }
-
-    if false {
-        Sprite sp = sprite_cracks;
-        Draw2D_Instance_Data ins = make_ins_data(sp, en.tr, en.depth - 0.00001, en.pivot, vec2_one);
-        ins.scale = ins_data.scale;
-
-        float32 hp_prcnt = en.hp / en.max_hp;
-        float32 g = 0.8;
-        ins.color_factor = make_vec(g,g,g, sq(1.0 - hp_prcnt));
-
-        draw_texture(*draw2d_renderer.batch_semi_transparent, db, sp.tex.gl_handle, ins);
-    }
-
 }
 
 bool default_col_response(Entity* en, Bullet* bullet) {
@@ -1392,23 +1415,23 @@ void update_world() {
         line("Right Mouse Click to spawn ship", 0);
         line("Hold Shift and Left Mouse Click to take control of the ship", 1.5);
 
+        if mouse_pressed(Right_Mouse) {
+            // let e = spawn_enemy(mouse_world_pos);
+            // let e = spawn_shockwave(mouse_world_pos);
+            // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
+
+            // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
+
+            // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
+
+            static uint32 index = 0;
+            spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
+
+            // spawn_worm(mouse_world_pos);
+        }
     }
 
 
-    if mouse_pressed(Right_Mouse) {
-        // let e = spawn_enemy(mouse_world_pos);
-        // let e = spawn_shockwave(mouse_world_pos);
-        // let vel = mul(make_vec((mouse_x - pmouse_x) as float32, -(mouse_y - pmouse_y) as float32), 0.01);
-
-        // spawn_explosion(64, mouse_world_pos, vec2_zero, 7*16.0);
-
-        // spawn_item(mouse_world_pos, { ItemKind.Rock, 3 } as Item);
-
-        static uint32 index = 0;
-        spawn_blueprint(mouse_world_pos, *ship_types[index++ % ship_types.length]);
-
-        // spawn_worm(mouse_world_pos);
-    }
 
     if mouse_pressed(Left_Mouse) and key(GLFW_KEY_LEFT_SHIFT) {
         let en = query_entity(mouse_world_pos);

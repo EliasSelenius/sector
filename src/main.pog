@@ -120,6 +120,7 @@ Sprite[2] sprites_items;
 
 Sprite sprite_turret;
 Sprite sprite_gun;
+Sprite sprite_small_turret;
 Sprite sprite_spacestation;
 
 Texture2D projectile;
@@ -132,10 +133,11 @@ Sprite sprite_star;
 Sprite sprite_shockwave;
 Sprite sprite_cloud;
 Sprite sprite_ftl_test;
-Sprite sprite_cracks;
+Sprite sprite_missile;
 
 Wav_File wav_hallo;
 Wav_File wav_debris_break;
+Wav_File wav_pew;
 
 // struct Assets {
 //     Spritesheet spritesheet;
@@ -148,11 +150,19 @@ Wav_File wav_debris_break;
 //     Sprite*[ItemKind_Count] items;
 // }
 
+enum SpriteID {
+    iron;
+    gold;
+    gun;
+    small_projectile;
+    small_turret;
+}
+
 void loadassets() {
 
-    wav_hallo = load_wav("assets/hallo.wav");
+    wav_hallo        = load_wav("assets/hallo.wav");
     wav_debris_break = load_wav("assets/debris-break-253779.wav");
-
+    wav_pew          = load_wav("assets/pew.wav");
 
     projectile = load_texture2D("assets/proj.bmp");
     particle   = load_texture2D("assets/particle.bmp");
@@ -209,9 +219,10 @@ void loadassets() {
         sprites_items[it] = get_sprite(*spritesheet_items, it);
     }
 
-    sprite_gun = get_sprite(*spritesheet_items, 2);
-    sprite_projectile2 = get_sprite(*spritesheet_items, 3);
-    sprite_cracks = get_sprite(*spritesheet_items, 4);
+    sprite_gun          = get_sprite(*spritesheet_items, 2);
+    sprite_projectile2  = get_sprite(*spritesheet_items, 3);
+    sprite_small_turret = get_sprite(*spritesheet_items, 4);
+    sprite_missile      = get_sprite(*spritesheet_items, 5);
 
     sprite_turret = get_sprite(*spritesheet, 10);
     sprite_spacestation = get_sprite(*spritesheet, 16);
