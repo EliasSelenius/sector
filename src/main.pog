@@ -240,6 +240,9 @@ char*[] tab_names = {"ships", "cargo", "tech", "map", "esc"};
 bool menu_open = false;
 Menu_Tabs menu_tab = .Ships;
 
+vec2 target_cam_pos = {};
+float32 target_cam_zoom = 160;
+
 Transform2D camera_world = {{0,0}, 0, 10};
 Transform2D camera_map = {scale = 6000};
 Transform2D camera_ship_selection = {scale=200};
@@ -346,7 +349,7 @@ void main() {
         print("sizeof Entity = ", sizeof Entity, " bytes.\n");
     }
 
-    gen_world(0);
+    world_data = gen_world(0);
 
     audio_init(*wav_hallo);
     while grax_loop() {
@@ -519,73 +522,94 @@ void draw_menu() {
         draw_ship_outfitter();
     } break;
     case .Map: {
-
-        mouse_drag_control(*camera_map);
-        camera_to_dispatch = camera_map;
-
-        let l = *world_ui_layer;
-
-        // draw_minimap(vec2_zero);
-
-
-        // TODO: hmm... should we draw the background on the map?
-        // draw_background(camera_map.pos);
-
-        for y: 0 .. sector_count_sqrt for x: 0 .. sector_count_sqrt {
-
-            let sector = index_sectors(x, y);
-            // let north = index_sectors(x, y+1);
-            // if north and north.faction_team_id != sector.faction_team_id {
-
-            // }
-
-
-            float32 opa = 0.1;
-            Color bg_color = opacity(sector.discovered ? White : Gray, opa);
-            Color tx_color = opacity(Black, opa);
-
-            ivec2 spos = {x, y} - make_ivec2(sector_count_sqrt/2);
-            vec2 pos = make_vec(spos) * sector_size;
-            vec2 size = {sector_size, sector_size};
-            UI_Rect rect = {pos, size};
-            float32 pixel_size = 2.0 / app.window_height * camera_map.scale;
-            rect.size = rect.size - vec2_one*pixel_size;
-            draw_rect(l, rect, bg_color);
-
-            let level = get_level(pos);
-            let str = to_string(level);
-            float32 glyph_height = rect.size.y * 0.4;
-            draw_text(l, center_text(rect, glyph_height, str), glyph_height, str, tx_color);
-
-            draw_rect(l, sector.biome_center, vec2_one*pixel_size*2, Green);
-        }
-
-        for 0 .. entity_pool.count {
-            let en = *entity_pool.data[it];
-            if is_dead(en) continue;
-
-            vec4 color_fac = vec4_one;
-            vec4 color_add = vec4_zero;
-            vec4 color_out = vec4_zero;
-            if en.entity_type == .ship {
-                float32 t = (sin(app.total_run_time*5.0) + 1.0) / 2.0;
-                float32 w = lerp(t, 0.4, 1);
-                if en.team_id == team_id_player {
-                    color_fac = {0.2,0.2,w,1};
-                    color_add = {0,0,w,1};
-                } else {
-                    color_fac = {w,0.2,0.2,1};
-                    color_add = {w,0,0,1};
-                }
-            } else if en.entity_type == .asteroid {
-                float32 v = 0.3;
-                color_fac = {v,v,v,1};
-            }
-
-            draw_entity(en, en.tr, color_fac, color_add, color_out);
-        }
+        draw_map();
     } break;
     case .Esc: break;
+    }
+}
+
+void draw_map() {
+    mouse_drag_control(*camera_map);
+    camera_to_dispatch = camera_map;
+
+    float32 pixel_size = 2.0 / app.window_height * camera_map.scale;
+    let l = *world_ui_layer;
+
+    uint32 player_level = 0;
+
+
+    // draw_minimap(vec2_zero);
+
+
+    // TODO: hmm... should we draw the background on the map?
+    // draw_background(camera_map.pos);
+
+    for y: 0 .. sector_count_sqrt for x: 0 .. sector_count_sqrt {
+        let sector = index_sectors(x, y);
+        let north = index_sectors(x, y+1);
+        let south = index_sectors(x, y-1);
+        let west  = index_sectors(x-1, y);
+        let east  = index_sectors(x+1, y);
+
+        bool neighbor_discovered = (north and north.discovered)
+                                or (south and south.discovered)
+                                or (west  and west.discovered)
+                                or (east  and east.discovered);
+
+        Color bg_color = {};
+        Color tx_color = opacity(Black, 0.2);
+
+        string str = to_string(sector.level);
+
+        if sector.discovered {
+            bg_color = opacity(Gray, 0.05);
+        } else if neighbor_discovered {
+            bg_color = opacity(White, 0.05);
+        } else {
+            str = make_string("?");
+        }
+
+
+        ivec2 sector_coord = {x, y} - make_ivec2(sector_count_sqrt/2);
+        UI_Rect rect = {
+            center = make_vec(sector_coord) * sector_size,
+            size = {sector_size, sector_size}
+        };
+
+        if bg_color.a  draw_rect(l, pad(rect, pixel_size), bg_color);
+
+        float32 glyph_height = rect.size.y * 0.4;
+        draw_text(l, center_text(rect, glyph_height, str), glyph_height, str, tx_color);
+
+        // draw_rect(l, sector.biome_center, vec2_one*pixel_size*2, Green);
+    }
+
+    vec2 poi = camera_world.pos;
+    draw_text(l, poi, camera_map.scale * 0.05, "?", Green);
+
+    for 0 .. entity_pool.count {
+        let en = *entity_pool.data[it];
+        if is_dead(en) continue;
+
+        vec4 color_fac = vec4_one;
+        vec4 color_add = vec4_zero;
+        vec4 color_out = vec4_zero;
+        if en.entity_type == .ship {
+            float32 t = (sin(app.total_run_time*5.0) + 1.0) / 2.0;
+            float32 w = lerp(t, 0.4, 1);
+            if en.team_id == team_id_player {
+                color_fac = {0.2,0.2,w,1};
+                color_add = {0,0,w,1};
+            } else {
+                color_fac = {w,0.2,0.2,1};
+                color_add = {w,0,0,1};
+            }
+        } else if en.entity_type == .asteroid {
+            float32 v = 0.3;
+            color_fac = {v,v,v,1};
+        }
+
+        draw_entity(en, en.tr, color_fac, color_add, color_out);
     }
 }
 
@@ -737,17 +761,18 @@ void draw_minimap(vec2 center) {
     float32 px = 2.0 / app.window_height;
 
     float32 scale = 0.12;
-    let center_sector = get_sector_coord(camera_world.pos);
+    vec2 center_sector = get_sector_coord(camera_world.pos);
     for y: -1 .. 2   for x: -1 .. 2 {
+        vec2 sector_pos = center_sector + {x, y};
+        let sector = *world.sectors[get_sector_index(make_ivec(sector_pos))];
+
         let pos = camera_world.pos / sector_size;
-        let sector_pos = center_sector + {x, y};
-        uint32 sector_level = (abs(sector_pos.x) + abs(sector_pos.y)) as uint32;
         vec2 screen_pos = center + (sector_pos - pos) * scale;
 
         UI_Rect rect = {screen_pos, {scale, scale}};
 
         draw_rect(pad(rect, 1*px), opacity(Gray, 0.3));
-        draw_text(screen_pos, 0.40 * scale, to_string(sector_level), Black);
+        draw_text(screen_pos, 0.40 * scale, to_string(sector.level), Black);
     }
 
     vec2 world2minimap(vec2 wpos) {

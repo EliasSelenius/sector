@@ -1345,8 +1345,6 @@ void update_world() {
     if key_pressed(GLFW_KEY_SPACE)  player = null;
 
     { // camera_world controlls:
-        static vec2 target_cam_pos = {};
-        static float32 target_cam_zoom = 160;
 
         float32 cam_min_zoom = 16;
         float32 cam_max_zoom = 6000;
@@ -1556,8 +1554,14 @@ Chunk[chunk_count] chunks = {};
 const sector_size = chunk_size * chunk_count_sqrt;
 const sector_count_sqrt = 41;
 const sector_count = sector_count_sqrt * sector_count_sqrt;
-Sector[sector_count] sectors;
 
+struct World {
+    ivec2 spawn_sector_coord;
+    Sector[sector_count] sectors;
+}
+
+World world_data;
+World* world = *world_data;
 
 struct Chunk {
     ivec2 coord;
@@ -1572,6 +1576,7 @@ struct Sector {
     Biome biome;
     vec2 biome_center;
     uint32 faction_team_id;
+    uint32 level;
     bool discovered;
 }
 
@@ -1581,7 +1586,7 @@ Sector* index_sectors(int32 x, y) {
     or x >= sector_count_sqrt
     or y >= sector_count_sqrt return null;
 
-    return *sectors[y * sector_count_sqrt + x];
+    return *world.sectors[y * sector_count_sqrt + x];
 }
 
 vec2 get_sector_coord(vec2 pos) {
@@ -1594,7 +1599,7 @@ uint32 get_sector_index(ivec2 coord) {
 }
 
 Sector* get_sector(vec2 pos) {
-    return *sectors[get_sector_index(make_ivec(get_sector_coord(pos)))];
+    return *world.sectors[get_sector_index(make_ivec(get_sector_coord(pos)))];
 }
 
 bool is_valid_sector_coord(ivec2 coord) {
@@ -1612,7 +1617,7 @@ Biome get_biome(vec2 pos) {
     for y: -1 .. 2 for x: -1 .. 2 {
         ivec2 c = coord + {x, y};
         if is_valid_sector_coord(c) {
-            let sector = *sectors[get_sector_index(c)];
+            let sector = *world.sectors[get_sector_index(c)];
             let sqd = sqdist(sector.biome_center, pos);
             if sqd < min_sqd {
                 sec = sector;
@@ -1625,8 +1630,7 @@ Biome get_biome(vec2 pos) {
 }
 
 uint32 get_level(vec2 pos) {
-    let coord = get_sector_coord(pos);
-    return (abs(coord.x) + abs(coord.y)) as uint32;
+    return get_sector(pos).level;
 }
 
 ivec2 get_chunk_coord(vec2 pos) {
@@ -1764,16 +1768,27 @@ void spawn_chunk(Chunk* chunk, ivec2 coord) {
     }
 }
 
-void gen_world(int32 seed) {
+World gen_world(int32 seed) {
+    World w = {};
+    w.spawn_sector_coord = make_ivec(random_vec2(seed++, 10));
+    target_cam_pos = make_vec(w.spawn_sector_coord) * sector_size;
+
     for y: 0 .. sector_count_sqrt for x: 0 .. sector_count_sqrt {
         uint32 i = y * sector_count_sqrt + x;
-        let sector = *sectors[i];
+        let sector = *w.sectors[i];
         ivec2 spos = {x, y} - make_ivec2(sector_count_sqrt/2);
         vec2 pos = make_vec(spos) * sector_size;
 
         let offset = make_vec(random(seed++), random(seed++)) * sector_size * 0.5;
         sector.biome_center = pos + offset;
-
         sector.biome = random01(seed++) * Biome.Count;
+
+        ivec2 dist = spos - w.spawn_sector_coord;
+        let l = abs(make_vec(dist) / 2.0
+              + 1.0*make_vec(random(seed++), random(seed++)));
+
+        sector.level = (l.x + l.y) as uint32;
     }
+
+    return w;
 }
