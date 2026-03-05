@@ -16,7 +16,7 @@ struct Particle {
     float32 size_start, size_end;
     vec4 color_start, color_end;
 
-    Texture2D tex;
+    Sprite sprite;
 
     uint32 flags;
 }
@@ -24,9 +24,9 @@ struct Particle {
 
 Particle[..] particles = list_create(sizeof Particle);
 
-void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, 0.5, 2, 0.5, 3.0, particle);
-void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time) spawn_particle(pos, vel, min_size, max_size, min_time, max_time, particle);
-void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time, Texture2D tex) {
+void spawn_particle(vec2 pos, vel) spawn_particle(pos, vel, 0.5, 2, 0.5, 3.0, sprite_particle);
+void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time) spawn_particle(pos, vel, min_size, max_size, min_time, max_time, sprite_particle);
+void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_time, Sprite sp) {
     Particle p = {};
 
     p.color_start = color_fire;
@@ -42,7 +42,7 @@ void spawn_particle(vec2 pos, vel, float32 min_size, max_size, min_time, max_tim
     p.size_start = random_range(global_seed++, min_size, max_size);
     p.size_end = 0;
 
-    p.tex = tex;
+    p.sprite = sp;
     p.lifetime = random_range(global_seed++, min_time, max_time);
     list_add(*particles, *p);
 }
@@ -64,7 +64,7 @@ Particle make_particle(vec2 pos, vel, float32 size, rot, ang_vel, lifetime, vec4
     p.size_start = size;
     p.size_end = 0;
 
-    p.tex = particle;
+    p.sprite = sprite_particle;
     p.lifetime = lifetime;
 
     return p;
@@ -92,7 +92,7 @@ void spawn_disipating_dust_particle(vec2 pos, float32 size, max_vel_magnitude, v
     p.size_start = p.size_end * 0.1;
 
     // p.tex = particle;
-    p.tex = sprite_cloud.tex;
+    p.sprite = sprite_cloud;
     p.lifetime = 0.2 + random01() * 2;
     list_add(*particles, *p);
 }
@@ -145,7 +145,7 @@ void update_particles() {
         float32 size = lerp(t, p.size_start, p.size_end);
 
         Transform2D tr = { pos = p.pos, rot = p.rot, scale = size };
-        draw_texture(tr, -0.001, p.tex, true, color, vec4_zero);
+        draw_sprite(tr, -0.001, p.sprite, color, vec4_zero, vec4_zero);
 
         p.elapsed_lifetime += dt;
 

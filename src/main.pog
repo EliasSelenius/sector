@@ -135,6 +135,10 @@ Sprite sprite_cloud;
 Sprite sprite_ftl_test;
 Sprite sprite_missile;
 
+
+Texture2D*[..] textures = list_create(sizeof Texture2D*);
+
+
 Wav_File wav_hallo;
 Wav_File wav_debris_break;
 Wav_File wav_pew;
@@ -170,13 +174,20 @@ void loadassets() {
     // set_filter(particle, TextureFilter.linear);
     // set_wrap_mode(particle, TextureWrapMode.clamp_to_edge);
 
-    Sprite load_sprite(char* file) return make_sprite(load_texture2D(file));
-    sprite_projectile = make_sprite(projectile);
-    sprite_particle = make_sprite(particle);
-    sprite_star = load_sprite("assets/star.bmp");
-    sprite_shockwave = load_sprite("assets/shockwave.bmp");
-    sprite_cloud = load_sprite("assets/cloud.bmp");
-    sprite_ftl_test = load_sprite("assets/ftl_test.bmp");
+    Sprite load_sprite(char* file) {
+        Texture2D* tp = malloc(sizeof Texture2D);
+        @tp = load_texture2D(file);
+        list_add(*textures, *tp);
+
+        return make_sprite(tp);
+    }
+
+    sprite_projectile = make_sprite(*projectile);
+    sprite_particle   = make_sprite(*particle);
+    sprite_star       = load_sprite("assets/star.bmp");
+    sprite_shockwave  = load_sprite("assets/shockwave.bmp");
+    sprite_cloud      = load_sprite("assets/cloud.bmp");
+    sprite_ftl_test   = load_sprite("assets/ftl_test.bmp");
 
     // set_filter(sprite_cloud.tex, TextureFilter.linear);
 

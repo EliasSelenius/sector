@@ -677,7 +677,7 @@ void draw_line_segment(vec2 a, b, float32 thickness, depth, vec4 color_fac, colo
 
     draw_texture(
         draw2d_renderer.quad_db, tr, depth,
-        white_texture,
+        *white_texture,
         true, vec2_zero, uv_scale,
         color_fac, color_add, color_out);
 }
@@ -732,7 +732,7 @@ void fire_gun(Entity* en, Gun* gun, vec2 target) {
 
         static float32 flash_time = 0.1;
         let p = make_particle(emit_pos, en.vel, gun_flash_size / sp.tex.width, random(global_seed++) * Pi, 0, flash_time, gun_flash_color_fac, 0);
-        p.tex = sp.tex;
+        p.sprite = sp;
         spawn_particle(p);
     }
 
@@ -1056,7 +1056,7 @@ void update_entity(Entity* en) {
 
                 Particle p = {};
                 p.pos = en.tr.pos;
-                p.tex = sprite_shockwave.tex;
+                p.sprite = sprite_shockwave;
                 p.size_start = tr.scale;
                 p.size_end = tr.scale * 6;
                 p.lifetime = 0.5;
@@ -1231,7 +1231,7 @@ bool default_col_response(Entity* en, Bullet* bullet) {
 
         Particle p = {};
         p.pos = bullet.pos;
-        p.tex = sp.tex;
+        p.sprite = sp;
 
         p.size_start = 5.0 / pxs.x;
         p.size_end = p.size_start * 2;
@@ -1481,7 +1481,7 @@ void update_world() {
             float32 life_time = 0.15 + dt*t;
 
             Particle p = make_particle(pos, vel, size, rot, ang_vel, life_time, color, 0);
-            p.tex = white_texture;
+            p.sprite = make_sprite(*white_texture);
             spawn_particle(p);
         }
 
