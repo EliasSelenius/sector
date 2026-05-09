@@ -398,7 +398,7 @@ void main() {
         }
 
         if key_pressed('R') {
-            default2d_shader = load_shader(default2d_shader.name.chars);
+            shader_reload(*default2d_shader);
         }
 
         glDepthMask(true);
